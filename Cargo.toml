@@ -1,11 +1,11 @@
 [package]
 name = "zeekstd"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
 anyhow = "1.0.95"
-clap = { version = "4.5.27", features = ["derive"] }
+clap = { version = "4.5.29", features = ["derive"] }
 indicatif = "0.17.11"
 # TODO: Use official release once available
 zstd-safe = { git = "https://github.com/gyscos/zstd-rs", features = [
