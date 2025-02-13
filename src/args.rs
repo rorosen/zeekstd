@@ -26,10 +26,10 @@ impl FromStr for DecompressPosition {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandArgs {
-    /// Compress (alias c) INPUT_FILE; reads from STDIN if INPUT_FILE is `-` or not provided
+    /// Compress (default, alias c) INPUT_FILE; reads from STDIN if INPUT_FILE is `-` or not provided
     #[clap(alias = "c")]
     Compress(CompressArgs),
-    /// Decompress (alias d) INPUT_FILE; alias 'd'
+    /// Decompress (alias d) INPUT_FILE
     #[clap(alias = "d")]
     Decompress(DecompressArgs),
 }
