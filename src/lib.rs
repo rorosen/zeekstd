@@ -13,6 +13,8 @@ use indicatif::{HumanBytes, ProgressBar, ProgressDrawTarget, ProgressStyle};
 pub mod args;
 mod compress;
 mod decompress;
+#[cfg(test)]
+mod tests;
 
 pub enum Mode<'a> {
     Compress {

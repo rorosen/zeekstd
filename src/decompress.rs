@@ -85,20 +85,3 @@ impl<F> Decompressor<'_, F> {
         Ok(())
     }
 }
-
-// TODO: add tests
-mod tests {
-    #[test]
-    fn foo() {
-        let mut out_buf = vec![0u8; 1024];
-
-        out_buf.truncate(0);
-        // out_buf.resize(512, 0);
-        // unsafe {
-        //     out_buf.set_len(512);
-        // }
-        out_buf.shrink_to(0);
-        dbg!(out_buf.len());
-        dbg!(out_buf.capacity());
-    }
-}

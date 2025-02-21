@@ -1,4 +1,7 @@
-use std::io::{Read, Write};
+use std::{
+    cmp,
+    io::{Read, Write},
+};
 
 use anyhow::{anyhow, Context, Result};
 use indicatif::ProgressBar;
@@ -38,9 +41,10 @@ impl Compressor {
         writer: &mut dyn Write,
         bar: &Option<ProgressBar>,
     ) -> Result<()> {
-        let mut in_buf = vec![0u8; self.max_frame_size as usize];
+        let cap = cmp::min(self.max_frame_size, 8192) as usize;
+        let mut in_buf = vec![0u8; cap];
         // Provide some extra space for meta data
-        let mut out_buf = vec![0u8; (self.max_frame_size + 1024) as usize];
+        let mut out_buf = vec![0u8; cap + 1024];
 
         loop {
             let n = reader.read(&mut in_buf).context("Failed to read")?;
