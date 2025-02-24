@@ -32,11 +32,13 @@
           ...
         }:
         {
-          packages = (import ./nix/packages { inherit pkgs; }) // {
+          packages = {
+            zeekstd = pkgs.callPackage ./build.nix { };
             default = config.packages.zeekstd;
           };
 
           checks = {
+            test = pkgs.callPackage ./test.nix { inherit (config.packages) zeekstd; };
             clippy = config.packages.zeekstd.overrideAttrs (
               _: previousAttrs: {
                 pname = previousAttrs.pname + "-clippy";
