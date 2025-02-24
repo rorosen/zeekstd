@@ -8,7 +8,7 @@ use anyhow::Result;
 use clap::Parser;
 use zeekstd::{
     args::{CommandArgs, CompressArgs, DecompressArgs},
-    OutputWriter, Zeekstd,
+    OutWriter, Zeekstd,
 };
 
 /// Compress and decompress data using the Zstandard Seekable Format.
@@ -110,12 +110,12 @@ impl Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let out_path = cli.out_path();
-    let output_writer = OutputWriter::new(out_path, cli.force, cli.quiet, cli.is_input_stdin())?;
+    let out_writer = OutWriter::new(out_path, cli.force, cli.quiet, cli.is_input_stdin())?;
     let input_len = cli.input_len();
     let command_args = cli
         .command_args
         .unwrap_or(CommandArgs::Compress(cli.compress_args));
-    let mut zeekstd = Zeekstd::new(command_args, output_writer)?;
+    let mut zeekstd = Zeekstd::new(command_args, out_writer)?;
     if !cli.quiet && !cli.stdout {
         zeekstd.with_progress_bar(input_len);
     }

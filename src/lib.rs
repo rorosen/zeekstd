@@ -39,12 +39,12 @@ impl Mode<'_> {
     }
 }
 
-pub enum OutputWriter {
+pub enum OutWriter {
     Stdout(Stdout),
     File { file: File, path: PathBuf },
 }
 
-impl OutputWriter {
+impl OutWriter {
     pub fn new(
         path: Option<PathBuf>,
         force: bool,
@@ -64,9 +64,8 @@ impl OutputWriter {
                     io::stdin()
                         .read_line(&mut buf)
                         .context("Failed to read stdin")?;
-                    match buf.trim_end() {
-                        "y" => (),
-                        _ => bail!("{} already exists", path.display()),
+                    if buf.trim_end() != "y" {
+                        bail!("{} already exists", path.display());
                     }
                 }
                 let file = File::create(&path).context("Failed to create output file")?;
@@ -86,24 +85,24 @@ impl OutputWriter {
 
     fn into_out_path(self) -> Option<PathBuf> {
         match self {
-            OutputWriter::Stdout(_) => None,
-            OutputWriter::File { path, .. } => Some(path),
+            OutWriter::Stdout(_) => None,
+            OutWriter::File { path, .. } => Some(path),
         }
     }
 }
 
-impl Write for OutputWriter {
+impl Write for OutWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            OutputWriter::Stdout(stdout) => stdout.write(buf),
-            OutputWriter::File { file, .. } => file.write(buf),
+            OutWriter::Stdout(stdout) => stdout.write(buf),
+            OutWriter::File { file, .. } => file.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
-            OutputWriter::Stdout(stdout) => stdout.flush(),
-            OutputWriter::File { file, .. } => file.flush(),
+            OutWriter::Stdout(stdout) => stdout.flush(),
+            OutWriter::File { file, .. } => file.flush(),
         }
     }
 }
@@ -111,12 +110,12 @@ impl Write for OutputWriter {
 pub struct Zeekstd<'a> {
     mode: Mode<'a>,
     in_path: Option<PathBuf>,
-    output: OutputWriter,
+    output: OutWriter,
     progress_bar: Option<ProgressBar>,
 }
 
 impl Zeekstd<'_> {
-    pub fn new(args: CommandArgs, output: OutputWriter) -> Result<Self> {
+    pub fn new(args: CommandArgs, output: OutWriter) -> Result<Self> {
         match args {
             CommandArgs::Compress(cargs) => {
                 let mut in_path = None;
