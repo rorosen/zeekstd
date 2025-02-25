@@ -122,7 +122,7 @@ impl Zeekstd<'_> {
                 let compressor = Compressor::new(
                     cargs.compression_level,
                     !cargs.no_checksum,
-                    cargs.max_frame_size,
+                    cargs.max_frame_size.as_u32(),
                 )?;
                 let input: Box<dyn Read> = match cargs.input_file.as_os_str().to_str() {
                     Some("-") => Box::new(io::stdin()),
