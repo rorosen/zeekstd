@@ -43,8 +43,7 @@ impl Compressor {
     ) -> Result<()> {
         let cap = cmp::min(self.max_frame_size, 8192) as usize;
         let mut in_buf = vec![0u8; cap];
-        // Provide some extra space for meta data
-        let mut out_buf = vec![0u8; cap + 1024];
+        let mut out_buf = vec![0u8; cap];
 
         loop {
             let n = reader.read(&mut in_buf).context("Failed to read")?;
@@ -55,9 +54,9 @@ impl Compressor {
                 b.inc(n as u64);
             }
             let mut in_buffer = InBuffer::around(&in_buf[..n]);
-            let mut out_buffer = OutBuffer::around(&mut out_buf);
 
             while in_buffer.pos() < n {
+                let mut out_buffer = OutBuffer::around(&mut out_buf);
                 self.stream
                     .compress_stream(&mut out_buffer, &mut in_buffer)
                     .map_err(|c| {
@@ -66,10 +65,10 @@ impl Compressor {
                             zstd_safe::get_error_name(c)
                         )
                     })?;
+                writer
+                    .write(out_buffer.as_slice())
+                    .context("Failed to write compressed data")?;
             }
-            writer
-                .write(out_buffer.as_slice())
-                .context("Failed to write compressed data")?;
         }
 
         loop {
