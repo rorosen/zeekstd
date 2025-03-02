@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{ffi::OsString, fs, path::PathBuf, str::FromStr};
 
 use anyhow::bail;
 use clap::{Parser, Subcommand};
@@ -80,6 +80,84 @@ pub enum CommandArgs {
     Decompress(DecompressArgs),
 }
 
+impl CommandArgs {
+    pub fn is_input_stdin(&self) -> bool {
+        let input_file = match &self {
+            CommandArgs::Compress(CompressArgs { input_file, .. })
+            | CommandArgs::Decompress(DecompressArgs { input_file, .. }) => input_file,
+        };
+        input_file.as_os_str().to_str() == Some("-")
+    }
+
+    pub fn input_len(&self) -> Option<u64> {
+        let input_file = match &self {
+            CommandArgs::Compress(CompressArgs { input_file, .. }) => {
+                if self.is_input_stdin() {
+                    return None;
+                }
+                input_file
+            }
+            CommandArgs::Decompress(DecompressArgs { input_file, .. }) => input_file,
+        };
+
+        fs::metadata(input_file).map(|m| m.len()).ok()
+    }
+
+    pub fn in_path(&self) -> Option<&str> {
+        if self.is_input_stdin() {
+            return None;
+        }
+
+        let in_path = match self {
+            CommandArgs::Compress(args) => &args.input_file,
+            CommandArgs::Decompress(args) => &args.input_file,
+        };
+
+        in_path.as_os_str().to_str()
+    }
+
+    pub fn out_path(&self, stdout: bool) -> Option<PathBuf> {
+        let determine_out_path = |input_file: &PathBuf| {
+            if self.is_input_stdin() {
+                return None;
+            }
+
+            // TODO: Use `add_extension` when stable: https://github.com/rust-lang/rust/issues/127292
+            let extension = input_file.extension().map_or_else(
+                || OsString::from("zst"),
+                |e| {
+                    let mut ext = OsString::from(e);
+                    ext.push(".zst");
+                    ext
+                },
+            );
+
+            Some(input_file.with_extension(extension))
+        };
+
+        if stdout {
+            return None;
+        }
+
+        match &self {
+            CommandArgs::Compress(CompressArgs {
+                input_file,
+                output_file,
+                ..
+            }) => output_file
+                .clone()
+                .or_else(|| determine_out_path(input_file)),
+            CommandArgs::Decompress(DecompressArgs {
+                input_file,
+                output_file,
+                ..
+            }) => output_file
+                .clone()
+                .or_else(|| Some(input_file.with_extension(""))),
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 pub struct CompressArgs {
     /// Desired compression level between 1 and 19. Lower numbers provide faster compression,
@@ -124,10 +202,6 @@ pub struct DecompressArgs {
     /// The frame number at which decompression ends (inclusive).
     #[arg(long, group = "end")]
     pub to_frame: Option<u32>,
-
-    /// Size of the intermediate decompression buffer.
-    #[arg(long, default_value_t = 8192)]
-    pub buffer_size: usize,
 
     /// Input file.
     pub input_file: PathBuf,

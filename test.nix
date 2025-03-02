@@ -11,6 +11,8 @@ runCommand "zeekstd-test"
     ];
   }
   ''
+    set -x
+
     seq 20000 > numbers.txt
     # Compress via input file and stdin
     zeekstd numbers.txt
