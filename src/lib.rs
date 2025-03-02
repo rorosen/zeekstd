@@ -6,36 +6,90 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use args::{CommandArgs, DecompressPosition};
+use bar::Bar;
 use compress::Compressor;
 use decompress::Decompressor;
 use indicatif::{HumanBytes, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 pub mod args;
+mod bar;
 mod compress;
 mod decompress;
 #[cfg(test)]
 mod tests;
 
-pub enum Mode<'a> {
-    Compress {
-        compressor: Compressor,
-        input: Box<dyn Read>,
-    },
-    Decompress {
-        decompressor: Decompressor<'a, File>,
-        from: DecompressPosition,
-        from_frame: Option<u32>,
-        to: DecompressPosition,
-        to_frame: Option<u32>,
-    },
+pub struct Operation {
+    reader: Box<dyn Read>,
+    writer: Writer,
 }
 
-impl Mode<'_> {
-    fn as_str(&self) -> &'static str {
+enum Writer {
+    Compress(Compressor<OutWriter>),
+    Decompress(OutWriter),
+}
+
+impl Write for Writer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            Mode::Compress { .. } => "Compression",
-            Mode::Decompress { .. } => "Decompression",
+            Writer::Compress(compressor) => compressor.write(buf),
+            Writer::Decompress(out_writer) => out_writer.write(buf),
         }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Writer::Compress(compressor) => compressor.flush(),
+            Writer::Decompress(out_writer) => out_writer.flush(),
+        }
+    }
+}
+
+impl Operation {
+    pub fn new(args: CommandArgs, out: OutWriter) -> Result<Self> {
+        match args {
+            CommandArgs::Compress(cargs) => {
+                let compressor = Compressor::new(&cargs, out)?;
+                let reader: Box<dyn Read> = match cargs.input_file.as_os_str().to_str() {
+                    Some("-") => Box::new(io::stdin()),
+                    _ => Box::new(
+                        File::open(&cargs.input_file).context("Failed to open input file")?,
+                    ),
+                };
+
+                Ok(Self {
+                    reader,
+                    writer: Writer::Compress(compressor),
+                })
+            }
+            CommandArgs::Decompress(dargs) => {
+                let file = File::open(&dargs.input_file).context("Failed to open input file")?;
+                let decompressor = Decompressor::new(Box::new(file), dargs)?;
+
+                Ok(Self {
+                    reader: Box::new(decompressor),
+                    writer: Writer::Decompress(out),
+                })
+            }
+        }
+    }
+
+    pub fn run(mut self, with_bar: bool, input_len: Option<u64>) -> Result<()> {
+        let bar = with_bar.then(|| Bar::new(input_len));
+
+        let res = if let Some(bar) = bar {
+            io::copy(&mut bar.as_reader(self.reader), &mut self.writer)
+        } else {
+            io::copy(&mut self.reader, &mut self.writer)
+        };
+
+        let written = res.context("Failed to run operation")?;
+        eprintln!("{written} bytes");
+
+        if let Writer::Compress(mut compressor) = self.writer {
+            compressor.end_stream()?;
+        }
+
+        Ok(())
     }
 }
 
@@ -104,147 +158,5 @@ impl Write for OutWriter {
             OutWriter::Stdout(stdout) => stdout.flush(),
             OutWriter::File { file, .. } => file.flush(),
         }
-    }
-}
-
-pub struct Zeekstd<'a> {
-    mode: Mode<'a>,
-    in_path: Option<PathBuf>,
-    output: OutWriter,
-    progress_bar: Option<ProgressBar>,
-}
-
-impl Zeekstd<'_> {
-    pub fn new(args: CommandArgs, output: OutWriter) -> Result<Self> {
-        match args {
-            CommandArgs::Compress(cargs) => {
-                let mut in_path = None;
-                let compressor = Compressor::new(
-                    cargs.compression_level,
-                    !cargs.no_checksum,
-                    cargs.max_frame_size.as_u32(),
-                )?;
-                let input: Box<dyn Read> = match cargs.input_file.as_os_str().to_str() {
-                    Some("-") => Box::new(io::stdin()),
-                    _ => {
-                        let input = Box::new(
-                            File::open(&cargs.input_file).context("Failed to open input file")?,
-                        );
-                        in_path = Some(cargs.input_file);
-                        input
-                    }
-                };
-                let mode = Mode::Compress {
-                    compressor,
-                    input: Box::new(input),
-                };
-                Ok(Self {
-                    mode,
-                    in_path,
-                    output,
-                    progress_bar: None,
-                })
-            }
-            CommandArgs::Decompress(dargs) => {
-                let file = File::open(&dargs.input_file).context("Failed to open input file")?;
-                let decompressor = Decompressor::new(Box::new(file))?;
-                let mode = Mode::Decompress {
-                    decompressor,
-                    from: dargs.from,
-                    from_frame: dargs.from_frame,
-                    to: dargs.to,
-                    to_frame: dargs.to_frame,
-                };
-                Ok(Self {
-                    mode,
-                    in_path: Some(dargs.input_file),
-                    output,
-                    progress_bar: None,
-                })
-            }
-        }
-    }
-
-    pub fn with_progress_bar(&mut self, input_len: Option<u64>) {
-        let bar = ProgressBar::with_draw_target(input_len, ProgressDrawTarget::stderr_with_hz(5))
-            .with_style(
-                ProgressStyle::with_template("Read {binary_bytes} of {binary_total_bytes}")
-                    .expect("Static template always works"),
-            );
-        self.progress_bar = Some(bar);
-    }
-
-    pub fn run(mut self) -> Result<()> {
-        match self.mode {
-            Mode::Compress {
-                ref mut input,
-                ref mut compressor,
-            } => compressor.compress_reader(input, &mut self.output, &self.progress_bar)?,
-            Mode::Decompress {
-                ref mut decompressor,
-                ref from,
-                from_frame,
-                ref to,
-                to_frame,
-            } => {
-                let offset = match from_frame {
-                    Some(frame_index) => decompressor
-                        .frame_decompressed_offset(frame_index)
-                        .map_err(|e| anyhow!("Failed to get offset of frame {frame_index}: {e}"))?,
-                    None => from.as_u64(),
-                };
-
-                let limit = match to_frame {
-                    Some(frame_index) => {
-                        let pos = decompressor
-                            .frame_decompressed_offset(frame_index)
-                            .map_err(|e| {
-                                anyhow!("Failed to get offset of frame {frame_index}: {e}")
-                            })?;
-                        let size =
-                            decompressor
-                                .frame_decompressed_size(frame_index)
-                                .map_err(|c| {
-                                    anyhow!(
-                                        "Failed to get size of frame {frame_index}: {}",
-                                        zstd_safe::get_error_name(c)
-                                    )
-                                })?;
-                        pos + size as u64
-                    }
-                    None => to.as_u64(),
-                };
-                decompressor
-                    .decompress(&mut self.output, offset, limit, &self.progress_bar)
-                    .context("Failed to decompress seekable object")?;
-            }
-        };
-
-        if let Some(bar) = self.progress_bar {
-            bar.finish_and_clear();
-            let input_tuple = self.in_path.and_then(|p| bar.length().map(|len| (p, len)));
-            let output_tuple = self
-                .output
-                .into_out_path()
-                .and_then(|p| fs::metadata(&p).map(|m| (p, m.len())).ok());
-
-            if let Some((ref path, len)) = input_tuple {
-                eprintln!("Read {} from {}", HumanBytes(len), path.display());
-            }
-            if let Some((ref path, len)) = output_tuple {
-                eprintln!("Wrote {} to {}", HumanBytes(len), path.display());
-            }
-            if let Some((input_len, output_len)) =
-                input_tuple.and_then(|i| output_tuple.map(|o| (i.1, o.1)))
-            {
-                eprintln!(
-                    "{} ratio: {:.2}%",
-                    self.mode.as_str(),
-                    100. / input_len as f64 * output_len as f64
-                );
-            }
-        }
-
-        Ok(())
     }
 }

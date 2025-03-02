@@ -1,27 +1,29 @@
 use std::{
     cmp,
-    io::{Read, Write},
+    io::{self, Write},
 };
 
 use anyhow::{anyhow, Context, Result};
-use indicatif::ProgressBar;
-use zstd_safe::{seekable::SeekableCStream, CompressionLevel, InBuffer, OutBuffer};
+use zstd_safe::{seekable::SeekableCStream, InBuffer, OutBuffer};
 
-pub struct Compressor {
+use crate::args::CompressArgs;
+
+pub struct Compressor<W> {
+    out: W,
     stream: SeekableCStream,
-    max_frame_size: u32,
+    buf: Vec<u8>,
 }
 
-impl Compressor {
-    pub fn new(
-        compression_level: CompressionLevel,
-        checksum_flag: bool,
-        max_frame_size: u32,
-    ) -> Result<Self> {
+impl<W: Write> Compressor<W> {
+    pub fn new(args: &CompressArgs, out: W) -> Result<Self> {
         let mut stream = SeekableCStream::try_create()
             .context("Failed to create seekable compression stream")?;
         stream
-            .init(compression_level, checksum_flag, max_frame_size)
+            .init(
+                args.compression_level,
+                !args.no_checksum,
+                args.max_frame_size.as_u32(),
+            )
             .map_err(|c| {
                 anyhow!(
                     "Failed to initialize seekable compression stream: {}",
@@ -30,54 +32,20 @@ impl Compressor {
             })?;
 
         Ok(Self {
+            out,
             stream,
-            max_frame_size,
+            buf: vec![0u8; cmp::min(args.max_frame_size.as_u32(), 8192) as usize],
         })
     }
 
-    pub fn compress_reader(
-        &mut self,
-        reader: &mut dyn Read,
-        writer: &mut dyn Write,
-        bar: &Option<ProgressBar>,
-    ) -> Result<()> {
-        let cap = cmp::min(self.max_frame_size, 8192) as usize;
-        let mut in_buf = vec![0u8; cap];
-        let mut out_buf = vec![0u8; cap];
-
+    pub fn end_stream(&mut self) -> Result<()> {
         loop {
-            let n = reader.read(&mut in_buf).context("Failed to read")?;
-            if n == 0 {
-                break;
-            }
-            if let Some(b) = bar {
-                b.inc(n as u64);
-            }
-            let mut in_buffer = InBuffer::around(&in_buf[..n]);
-
-            while in_buffer.pos() < n {
-                let mut out_buffer = OutBuffer::around(&mut out_buf);
-                self.stream
-                    .compress_stream(&mut out_buffer, &mut in_buffer)
-                    .map_err(|c| {
-                        anyhow!(
-                            "Failed to compress stream: {}",
-                            zstd_safe::get_error_name(c)
-                        )
-                    })?;
-                writer
-                    .write(out_buffer.as_slice())
-                    .context("Failed to write compressed data")?;
-            }
-        }
-
-        loop {
-            let mut out_buffer = OutBuffer::around(&mut out_buf);
+            let mut out_buffer = OutBuffer::around(&mut self.buf);
             let n = self
                 .stream
                 .end_stream(&mut out_buffer)
                 .map_err(|c| anyhow!("Failed to end stream: {}", zstd_safe::get_error_name(c)))?;
-            writer
+            self.out
                 .write(out_buffer.as_slice())
                 .context("Failed to write seek table")?;
             if n == 0 {
@@ -85,6 +53,31 @@ impl Compressor {
             }
         }
 
-        writer.flush().context("Failed to flush output")
+        self.out.flush().context("Failed to flush output")
+    }
+}
+
+impl<W: Write> Write for Compressor<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut in_buffer = InBuffer::around(buf);
+
+        while in_buffer.pos() < buf.len() {
+            let mut out_buffer = OutBuffer::around(&mut self.buf);
+            self.stream
+                .compress_stream(&mut out_buffer, &mut in_buffer)
+                .map_err(|c| {
+                    io::Error::other(format!(
+                        "Failed to compress data: {}",
+                        zstd_safe::get_error_name(c)
+                    ))
+                })?;
+            self.out.write(out_buffer.as_slice())?;
+        }
+
+        Ok(in_buffer.pos())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.out.flush()
     }
 }

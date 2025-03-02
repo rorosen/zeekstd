@@ -4,11 +4,11 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use zeekstd::{
     args::{CommandArgs, CompressArgs, DecompressArgs},
-    OutWriter, Zeekstd,
+    Operation, OutWriter,
 };
 
 /// Compress and decompress data using the Zstandard Seekable Format.
@@ -115,10 +115,8 @@ fn main() -> Result<()> {
     let command_args = cli
         .command_args
         .unwrap_or(CommandArgs::Compress(cli.compress_args));
-    let mut zeekstd = Zeekstd::new(command_args, out_writer)?;
-    if !cli.quiet && !cli.stdout {
-        zeekstd.with_progress_bar(input_len);
-    }
 
-    zeekstd.run()
+    let op = Operation::new(command_args, out_writer)?;
+    op.run(!cli.quiet && !cli.stdout, input_len)
+        .context("Failed to run operation")
 }
