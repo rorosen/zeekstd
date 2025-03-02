@@ -10,10 +10,10 @@ Compress data with the `compress` subcommand. This is the default when no subcom
 
 ```bash
 $ seq 20000 | zeekstd compress -o numbers.txt.zst
-Wrote 12.60 KiB to numbers.txt.zst
+STDIN : 11.85% ( 106.34 KiB => 12.60 KiB, numbers.txt.zst)
 # or
 $ seq 20000 | zeekstd -o numbers.txt.zst
-Wrote 12.60 KiB to numbers.txt.zst
+STDIN : 11.85% ( 106.34 KiB => 12.60 KiB, numbers.txt.zst)
 ```
 
 The created archive can be inspected with the regular `zstd` command.
@@ -35,17 +35,18 @@ Decompress with the `decompress` subcommand.
 
 ```bash
 $ zeekstd decompress numbers.txt.zst
-Read 12.60 KiB from numbers.txt.zst
-Wrote 106.34 KiB to numbers.txt
-Decompression ratio: 843.81%
+numbers.txt.zst : 106.34 KiB
 ```
 
-If you want to decompress the complete archive, you may also use the regular `zstd` tool as it
-produces the same result. However, the advantage of the seekable format shows when you only want to
-decompress only a part of the archive.
+Note that you can also use the regular `zstd` command to decompress the complete archive. However,
+the advantage of the seekable format shows when you want to decompress only a part of the archive.
+
+Use the `--from` and `--to` arguments to specify the decompressed start and end positions. You may
+also use the `--from-frame` and `--to-frame` arguments to specify frame numbers. We also pass `-cf`
+in the example to force printing to stdout, since we know that this is only text data.
 
 ```bash
-$ zeekstd decompress -cf --from 12348 --to 12362 numbers.txt.zst
+$ zeekstd d -cf --from 12348 --to 12362 numbers.txt.zst
 2692
 2693
 2694

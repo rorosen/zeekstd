@@ -1,14 +1,11 @@
-use std::{
-    ffi::OsString,
-    fs::{self},
-    path::PathBuf,
-};
+use std::io::{self, Write};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
+use indicatif::HumanBytes;
 use zeekstd::{
-    args::{CommandArgs, CompressArgs, DecompressArgs},
-    OutWriter, Zeekstd,
+    args::{CommandArgs, CompressArgs},
+    Input, Output,
 };
 
 /// Compress and decompress data using the Zstandard Seekable Format.
@@ -28,6 +25,10 @@ struct Cli {
     #[arg(short = 'c', long, action, global = true)]
     stdout: bool,
 
+    /// Do not show the progress counter.
+    #[arg(long, action, global = true)]
+    no_progress: bool,
+
     #[clap(subcommand)]
     command_args: Option<CommandArgs>,
 
@@ -36,89 +37,55 @@ struct Cli {
 }
 
 impl Cli {
-    pub fn is_input_stdin(&self) -> bool {
-        let input_file = match &self.command_args {
-            Some(CommandArgs::Compress(CompressArgs { input_file, .. }))
-            | Some(CommandArgs::Decompress(DecompressArgs { input_file, .. })) => input_file,
-            None => &self.compress_args.input_file,
-        };
-        input_file.as_os_str().to_str() == Some("-")
+    fn show_progress(&self) -> bool {
+        !self.quiet && !self.stdout && !self.no_progress
     }
 
-    fn input_len(&self) -> Option<u64> {
-        let input_file = match &self.command_args {
-            Some(CommandArgs::Compress(CompressArgs { input_file, .. })) => {
-                if self.is_input_stdin() {
-                    return None;
-                }
-                input_file
-            }
-            Some(CommandArgs::Decompress(DecompressArgs { input_file, .. })) => input_file,
-            None => &self.compress_args.input_file,
-        };
-
-        fs::metadata(input_file).map(|m| m.len()).ok()
-    }
-
-    fn out_path(&self) -> Option<PathBuf> {
-        let determine_out_path = |input_file: &PathBuf| {
-            if self.is_input_stdin() {
-                return None;
-            }
-
-            // TODO: Use `add_extension` when stable: https://github.com/rust-lang/rust/issues/127292
-            let extension = input_file.extension().map_or_else(
-                || OsString::from("zst"),
-                |e| {
-                    let mut ext = OsString::from(e);
-                    ext.push(".zst");
-                    ext
-                },
-            );
-
-            Some(input_file.with_extension(extension))
-        };
-
-        if self.stdout {
-            return None;
-        }
-
-        match &self.command_args {
-            Some(CommandArgs::Compress(CompressArgs {
-                input_file,
-                output_file,
-                ..
-            })) => output_file
-                .clone()
-                .or_else(|| determine_out_path(input_file)),
-            Some(CommandArgs::Decompress(DecompressArgs {
-                input_file,
-                output_file,
-                ..
-            })) => output_file
-                .clone()
-                .or_else(|| Some(input_file.with_extension(""))),
-            None => self
-                .compress_args
-                .output_file
-                .clone()
-                .or_else(|| determine_out_path(&self.compress_args.input_file)),
-        }
+    fn print_summary(&self) -> bool {
+        !self.quiet && !self.stdout
     }
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let out_path = cli.out_path();
-    let out_writer = OutWriter::new(out_path, cli.force, cli.quiet, cli.is_input_stdin())?;
-    let input_len = cli.input_len();
+    let show_progress = cli.show_progress();
+    let print_summary = cli.print_summary();
     let command_args = cli
         .command_args
         .unwrap_or(CommandArgs::Compress(cli.compress_args));
-    let mut zeekstd = Zeekstd::new(command_args, out_writer)?;
-    if !cli.quiet && !cli.stdout {
-        zeekstd.with_progress_bar(input_len);
+    let mut input = Input::new(&command_args)?;
+    let mut output = Output::new(&command_args, cli.force, cli.quiet, cli.stdout)?;
+
+    if show_progress {
+        input.with_progress(command_args.input_len());
     }
 
-    zeekstd.run()
+    io::copy(&mut input, &mut output)?;
+    output.flush().context("Failed to flush output")?;
+
+    if print_summary {
+        let in_path = command_args.in_path().unwrap_or("STDIN");
+        let bytes_read = input.bytes_read();
+
+        match command_args {
+            CommandArgs::Compress(_) => {
+                let bytes_written = output.bytes_written();
+
+                eprintln!(
+                    "{in_path} : {ratio:.2}% ( {read} => {written}, {output_path})",
+                    ratio = 100. / bytes_read as f64 * bytes_written as f64,
+                    read = HumanBytes(bytes_read),
+                    written = HumanBytes(output.bytes_written()),
+                    output_path = command_args
+                        .out_path(cli.stdout)
+                        .as_ref()
+                        .and_then(|o| o.as_os_str().to_str())
+                        .unwrap_or("STDOUT")
+                )
+            }
+            CommandArgs::Decompress(_) => eprintln!("{in_path} : {}", HumanBytes(bytes_read)),
+        }
+    }
+
+    Ok(())
 }
