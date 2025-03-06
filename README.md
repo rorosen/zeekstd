@@ -55,3 +55,8 @@ Notice that `zeekstd` needs to decompress the complete frame that contains the d
 the requested bytes are shown.
 
 See `zeekstd decompress --help` for all available decompression options.
+
+## License
+
+- The zstd C library is under a dual BSD/GPLv2 license.
+- Zeekstd is under a BSD license.
