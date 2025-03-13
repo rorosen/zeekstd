@@ -1,4 +1,9 @@
-use std::{ffi::OsString, fs, path::PathBuf, str::FromStr};
+use std::{
+    ffi::OsString,
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use anyhow::bail;
 use clap::{Parser, Subcommand};
@@ -41,21 +46,21 @@ impl FromStr for ByteValue {
 }
 
 #[derive(Debug, Clone)]
-pub struct DecompressPosition(u64);
+pub struct ByteOffset(u64);
 
-impl DecompressPosition {
+impl ByteOffset {
     pub fn as_u64(&self) -> u64 {
         self.0
     }
 }
 
-impl From<ByteValue> for DecompressPosition {
+impl From<ByteValue> for ByteOffset {
     fn from(value: ByteValue) -> Self {
         Self(value.as_u64())
     }
 }
 
-impl FromStr for DecompressPosition {
+impl FromStr for ByteOffset {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
@@ -72,48 +77,40 @@ impl FromStr for DecompressPosition {
 #[derive(Debug, Subcommand)]
 #[command(arg_required_else_help(true))]
 pub enum CommandArgs {
-    /// Compress (default, alias c) INPUT_FILE; reads from STDIN if INPUT_FILE is `-` or not provided
+    /// Compress INPUT_FILE; reads from STDIN if INPUT_FILE is `-` or not provided.
     #[clap(alias = "c")]
     Compress(CompressArgs),
-    /// Decompress (alias d) INPUT_FILE
+    /// Decompress INPUT_FILE.
     #[clap(alias = "d")]
     Decompress(DecompressArgs),
+    /// Print information about seekable Zstandard-compressed files.
+    #[clap(alias = "l")]
+    List(ListArgs),
 }
 
 impl CommandArgs {
     pub fn is_input_stdin(&self) -> bool {
-        let input_file = match &self {
+        self.input_file_str() == Some("-")
+    }
+
+    pub fn input_file(&self) -> &Path {
+        match self {
             CommandArgs::Compress(CompressArgs { input_file, .. })
-            | CommandArgs::Decompress(DecompressArgs { input_file, .. }) => input_file,
-        };
-        input_file.as_os_str().to_str() == Some("-")
+            | CommandArgs::Decompress(DecompressArgs { input_file, .. })
+            | CommandArgs::List(ListArgs { input_file, .. }) => input_file,
+        }
+    }
+
+    pub fn input_file_str(&self) -> Option<&str> {
+        self.input_file().as_os_str().to_str()
     }
 
     pub fn input_len(&self) -> Option<u64> {
-        let input_file = match &self {
-            CommandArgs::Compress(CompressArgs { input_file, .. }) => {
-                if self.is_input_stdin() {
-                    return None;
-                }
-                input_file
-            }
-            CommandArgs::Decompress(DecompressArgs { input_file, .. }) => input_file,
-        };
-
-        fs::metadata(input_file).map(|m| m.len()).ok()
-    }
-
-    pub fn in_path(&self) -> Option<&str> {
         if self.is_input_stdin() {
             return None;
         }
 
-        let in_path = match self {
-            CommandArgs::Compress(args) => &args.input_file,
-            CommandArgs::Decompress(args) => &args.input_file,
-        };
-
-        in_path.as_os_str().to_str()
+        fs::metadata(self.input_file()).map(|m| m.len()).ok()
     }
 
     pub fn out_path(&self, stdout: bool) -> Option<PathBuf> {
@@ -154,6 +151,7 @@ impl CommandArgs {
             }) => output_file
                 .clone()
                 .or_else(|| Some(input_file.with_extension(""))),
+            CommandArgs::List(_) => None,
         }
     }
 }
@@ -185,19 +183,19 @@ pub struct CompressArgs {
 
 #[derive(Debug, Parser)]
 pub struct DecompressArgs {
-    /// The decompressed position where decompression starts. Accepts the special values
-    /// 'start' and 'end'.
+    /// The offset (of the decompressed data) where decompression starts. Accepts the special
+    /// values 'start' and 'end'.
     #[arg(long, group = "start", default_value = "start")]
-    pub from: DecompressPosition,
+    pub from: ByteOffset,
 
     /// The frame number at which decompression starts.
     #[arg(long, group = "start")]
     pub from_frame: Option<u32>,
 
-    /// The decompressed position where decompression ends. Accepts the special values
-    /// 'start' and 'end'.
+    /// The offset (of the decompressed data) where decompression ends. Accepts the special
+    /// values 'start' and 'end'.
     #[arg(long, group = "end", default_value = "end")]
-    pub to: DecompressPosition,
+    pub to: ByteOffset,
 
     /// The frame number at which decompression ends (inclusive).
     #[arg(long, group = "end")]
@@ -209,6 +207,34 @@ pub struct DecompressArgs {
     /// Write data to the specified file.
     #[arg(short, long)]
     pub output_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+pub struct ListArgs {
+    /// The offset (of the decompressed data) where listing starts. Accepts the special values
+    /// 'start' and 'end'.
+    #[arg(long, group = "start")]
+    pub from: Option<ByteOffset>,
+
+    /// The frame number at which listing starts.
+    #[arg(long, group = "start")]
+    pub from_frame: Option<u32>,
+
+    /// The offset (of the decompressed data) where lisitng ends. Accepts the special values
+    /// 'start' and 'end'.
+    #[arg(long, group = "end")]
+    pub to: Option<ByteOffset>,
+
+    /// The frame number at which listing ends.
+    #[arg(long, group = "end")]
+    pub to_frame: Option<u32>,
+
+    /// The number of frames that should be listed.
+    #[arg(long, group = "end")]
+    pub num_frames: Option<u32>,
+
+    /// Input file.
+    pub input_file: PathBuf,
 }
 
 #[cfg(test)]
@@ -298,7 +324,7 @@ mod tests {
     #[test]
     fn decompress_position_start() {
         for input in ["start", "Start", "StARt", "START"] {
-            let result = DecompressPosition::from_str(input);
+            let result = ByteOffset::from_str(input);
             assert!(result.is_ok());
             let parsed_value = result.unwrap();
             assert_eq!(parsed_value.0, 0);
@@ -308,7 +334,7 @@ mod tests {
     #[test]
     fn decompress_position_end() {
         for input in ["end", "End", "eND", "END"] {
-            let result = DecompressPosition::from_str(input);
+            let result = ByteOffset::from_str(input);
             assert!(result.is_ok());
             let parsed_value = result.unwrap();
             assert_eq!(parsed_value.0, u64::MAX);

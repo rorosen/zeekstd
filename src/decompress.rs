@@ -50,7 +50,7 @@ impl<F> Decompressor<'_, F> {
         };
 
         if offset > limit {
-            bail!("End position ({limit}) cannot be greater than start position ({offset})");
+            bail!("End offset ({limit}) cannot be greater than start offset ({offset})");
         }
 
         Ok(Self {

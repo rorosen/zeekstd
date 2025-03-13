@@ -13,6 +13,7 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 pub mod args;
 mod compress;
 mod decompress;
+pub mod list;
 #[cfg(test)]
 mod tests;
 
@@ -59,6 +60,7 @@ impl Input<'_> {
                 _ => InputReader::new_file(&cargs.input_file)?,
             },
             CommandArgs::Decompress(ref dargs) => InputReader::new_decompressor(dargs)?,
+            CommandArgs::List(ref largs) => InputReader::new_file(&largs.input_file)?,
         };
 
         Ok(Self { bar: None, reader })

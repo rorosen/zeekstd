@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    args::{ByteValue, CompressArgs, DecompressArgs, DecompressPosition},
+    args::{ByteValue, CompressArgs, DecompressArgs, ByteOffset},
     compress::Compressor,
     decompress::Decompressor,
 };
@@ -21,9 +21,9 @@ const INPUT: &[u8] = br#"
 
 fn new_decompressor<F: Read + Seek>(src: F, start: &str, end: &str) -> Decompressor<'static, F> {
     let args = DecompressArgs {
-        from: DecompressPosition::from_str(start).unwrap(),
+        from: ByteOffset::from_str(start).unwrap(),
         from_frame: None,
-        to: DecompressPosition::from_str(end).unwrap(),
+        to: ByteOffset::from_str(end).unwrap(),
         to_frame: None,
         input_file: PathBuf::new(),
         output_file: None,

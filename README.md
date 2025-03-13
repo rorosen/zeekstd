@@ -4,7 +4,7 @@ Compress and decompress data using the
 [Zstandard Seekable Format](https://github.com/facebook/zstd/tree/dev/contrib/seekable_format). This
 tool uses rust bindings provided by [zstd-rs](https://github.com/gyscos/zstd-rs).
 
-## Compressing
+## Compression
 
 Compress data with the `compress` subcommand. This is the default when no subcommand is specified.
 
@@ -29,9 +29,9 @@ You can control the maximum frame size, and therefore the number of frames in th
 
 See `zeekstd compress --help` for all available compression options.
 
-## Decompressing
+## Decompression
 
-Decompress with the `decompress` subcommand.
+Decompress seekable archives with the `decompress` subcommand.
 
 ```bash
 $ zeekstd decompress numbers.txt.zst
@@ -56,6 +56,50 @@ Notice that `zeekstd` needs to decompress the complete frame that contains the d
 the requested bytes are shown.
 
 See `zeekstd decompress --help` for all available decompression options.
+
+## Print Information
+
+Print information about a seekable archive with the `list` subcommand. When called with no further
+arguments, it will print general information.
+
+```bash
+$ zeekstd list numbers.txt.zst
+Frames          Compressed      Decompressed    Ratio           Filename
+14              12.42 KiB       106.34 KiB      8.561           numbers.txt.zst
+```
+
+You can also list all frames of an archive.
+
+```bash
+$ zeekstd list numbers.txt.zst --from start --to end
+Frame Index     Compressed      Decompressed    Compressed Offset    Decompressed Offset
+0               2.23 KiB        8.00 KiB        0                    0
+1               697 B           8.00 KiB        2287                 8192
+2               745 B           8.00 KiB        2984                 16384
+3               752 B           8.00 KiB        3729                 24576
+4               722 B           8.00 KiB        4481                 32768
+5               806 B           8.00 KiB        5203                 40960
+6               923 B           8.00 KiB        6009                 49152
+7               883 B           8.00 KiB        6932                 57344
+8               963 B           8.00 KiB        7815                 65536
+9               910 B           8.00 KiB        8778                 73728
+10              879 B           8.00 KiB        9688                 81920
+11              948 B           8.00 KiB        10567                90112
+12              908 B           8.00 KiB        11515                98304
+13              297 B           2.34 KiB        12423                106496
+```
+
+Or only specific frames.
+
+```bash
+$ zeekstd l numbers.txt.zst --from-frame 6 --to-frame 9
+Frame Index     Compressed      Decompressed    Compressed Offset    Decompressed Offset
+6               923 B           8.00 KiB        6009                 49152
+7               883 B           8.00 KiB        6932                 57344
+8               963 B           8.00 KiB        7815                 65536
+```
+
+See `zeekstd list --help` for all available list options.
 
 ## License
 

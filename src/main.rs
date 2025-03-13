@@ -5,6 +5,7 @@ use clap::Parser;
 use indicatif::HumanBytes;
 use zeekstd::{
     args::{CommandArgs, CompressArgs},
+    list::list_frames,
     Input, Output,
 };
 
@@ -53,6 +54,12 @@ fn main() -> Result<()> {
     let command_args = cli
         .command_args
         .unwrap_or(CommandArgs::Compress(cli.compress_args));
+
+    if let CommandArgs::List(ref args) = command_args {
+        list_frames(args).context("Failed to analyze archive")?;
+        return Ok(());
+    }
+
     let mut input = Input::new(&command_args)?;
     let mut output = Output::new(&command_args, cli.force, cli.quiet, cli.stdout)?;
 
@@ -64,7 +71,11 @@ fn main() -> Result<()> {
     output.flush().context("Failed to flush output")?;
 
     if print_summary {
-        let in_path = command_args.in_path().unwrap_or("STDIN");
+        let input_path = match command_args.input_file_str() {
+            Some("-") => "STDIN",
+            Some(path) => path,
+            None => "¯\\_(ツ)_/¯",
+        };
         let bytes_read = input.bytes_read();
 
         match command_args {
@@ -72,7 +83,7 @@ fn main() -> Result<()> {
                 let bytes_written = output.bytes_written();
 
                 eprintln!(
-                    "{in_path} : {ratio:.2}% ( {read} => {written}, {output_path})",
+                    "{input_path} : {ratio:.2}% ( {read} => {written}, {output_path})",
                     ratio = 100. / bytes_read as f64 * bytes_written as f64,
                     read = HumanBytes(bytes_read),
                     written = HumanBytes(output.bytes_written()),
@@ -83,7 +94,10 @@ fn main() -> Result<()> {
                         .unwrap_or("STDOUT")
                 )
             }
-            CommandArgs::Decompress(_) => eprintln!("{in_path} : {}", HumanBytes(bytes_read)),
+            CommandArgs::Decompress(_) => eprintln!("{input_path} : {}", HumanBytes(bytes_read)),
+            CommandArgs::List(_) => {
+                unreachable!("The program never gets here when command is list")
+            }
         }
     }
 

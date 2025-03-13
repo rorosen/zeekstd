@@ -28,6 +28,9 @@ runCommand "zeekstd-test"
     # Decompress partially
     zeekstd decompress --stdout --from 12348 --to 12362 numbers.txt.zst > partial-numbers.txt
     echo -en "2692\n2693\n2694" | cmp partial-numbers.txt
+    # List archive. Just check that this works, I have no idea for a proper test
+    zeekstd l numbers.txt.zst
+    zeekstd l numbers.txt.zst --from start --to end
 
     touch $out
   ''
