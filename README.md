@@ -1,8 +1,12 @@
 # Zeekstd
 
 Compress and decompress data using the
-[Zstandard Seekable Format](https://github.com/facebook/zstd/tree/dev/contrib/seekable_format). This
-tool uses rust bindings provided by [zstd-rs](https://github.com/gyscos/zstd-rs).
+[Zstandard Seekable Format](https://github.com/facebook/zstd/tree/dev/contrib/seekable_format). The
+seekable format splits compressed data into a series of independent "frames", each compressed
+individually, so that decompression of a section in the middle of an archive only requires zeekstd
+to decompress at most a frame's worth of extra data, instead of the entire archive.
+
+Zeekstd uses rust bindings provided by [zstd-rs](https://github.com/gyscos/zstd-rs).
 
 ## Compression
 
@@ -60,12 +64,12 @@ See `zeekstd decompress --help` for all available decompression options.
 ## Print Information
 
 Print information about a seekable archive with the `list` subcommand. When called with no further
-arguments, it will print general information.
+arguments, it will print general information similar to `zstd -l`.
 
 ```bash
 $ zeekstd list numbers.txt.zst
-Frames          Compressed      Decompressed    Ratio           Filename
-14              12.42 KiB       106.34 KiB      8.561           numbers.txt.zst
+Frames          Compressed      Decompressed    Max Frame Size  Ratio           Filename
+14              12.42 KiB       106.34 KiB      8.00 KiB        8.561           numbers.txt.zst
 ```
 
 You can also list all frames of an archive.

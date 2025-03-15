@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    args::{ByteValue, CompressArgs, DecompressArgs, ByteOffset},
+    args::{ByteOffset, ByteValue, CompressArgs, DecompressArgs},
     compress::Compressor,
     decompress::Decompressor,
 };

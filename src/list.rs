@@ -40,22 +40,25 @@ pub fn list_frames(args: &ListArgs) -> Result<()> {
                 .frame_compressed_size(n)
                 .expect("Frame index is never out of range") as u64
         });
-        let decompressed = (0..frames).fold(0u64, |acc, n| {
-            acc + seekable
+        let decompressed_iter = (0..frames).map(|n| {
+            seekable
                 .frame_decompressed_size(n)
                 .expect("Frame index is never out of range") as u64
         });
+        let max_frame_size = decompressed_iter.clone().max();
+        let decompressed = decompressed_iter.sum::<u64>();
         let ratio = decompressed as f64 / compressed as f64;
 
         eprintln!(
-            "{: <15} {: <15} {: <15} {: <15} {: <15}",
-            "Frames", "Compressed", "Decompressed", "Ratio", "Filename"
+            "{: <15} {: <15} {: <15} {: <15} {: <15} {: <15}",
+            "Frames", "Compressed", "Decompressed", "Max Frame Size", "Ratio", "Filename"
         );
         eprintln!(
-            "{: <15} {: <15} {: <15} {: <15.3} {: <15}",
+            "{: <15} {: <15} {: <15} {: <15} {: <15.3} {: <15}",
             frames,
             format_bytes(compressed),
             format_bytes(decompressed),
+            format_bytes(max_frame_size.unwrap_or(0)),
             ratio,
             args.input_file
                 .as_os_str()
