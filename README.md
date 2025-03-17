@@ -108,4 +108,4 @@ See `zeekstd list --help` for all available list options.
 ## License
 
 - The zstd C library is under a dual BSD/GPLv2 license.
-- Zeekstd is under a BSD license.
+- Zeekstd is under a BSD 2-Clause License.

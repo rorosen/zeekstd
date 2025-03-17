@@ -1,6 +1,7 @@
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{self, IsTerminal, Read, Stdin, Write},
+    os::unix::fs::FileTypeExt,
     path::Path,
 };
 
@@ -130,7 +131,9 @@ impl Output {
     pub fn new(args: &CommandArgs, force: bool, quiet: bool, stdout: bool) -> Result<Self> {
         let writer: Box<dyn Write> = match args.out_path(stdout) {
             Some(path) => {
-                if !force && path.exists() {
+                let meta = fs::metadata(&path).ok();
+                if !force && path.exists() && !meta.is_some_and(|m| m.file_type().is_char_device())
+                {
                     if quiet || args.is_input_stdin() {
                         bail!("{} already exists; not overwritten", path.display());
                     }
