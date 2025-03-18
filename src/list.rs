@@ -63,7 +63,7 @@ pub fn list_frames(args: &ListArgs) -> Result<()> {
             args.input_file
                 .as_os_str()
                 .to_str()
-                .unwrap_or("¯\\_(ツ)_/¯")
+                .unwrap_or("")
         );
     } else {
         let map_error_code = |index, code| {

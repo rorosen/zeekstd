@@ -1,17 +1,17 @@
 use std::{
-    fs::{self, File},
-    io::{self, IsTerminal, Read, Stdin, Write},
-    os::unix::fs::FileTypeExt,
+    fs::File,
+    io::{self, Read, Stdin, Write},
     path::Path,
 };
 
-use anyhow::{bail, Context, Result};
-use args::{CommandArgs, DecompressArgs};
+use anyhow::{Context, Result};
+use args::DecompressArgs;
 use compress::Compressor;
 use decompress::Decompressor;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 pub mod args;
+pub mod command;
 mod compress;
 mod decompress;
 pub mod list;
@@ -54,19 +54,6 @@ pub struct Input<'a> {
 }
 
 impl Input<'_> {
-    pub fn new(args: &CommandArgs) -> Result<Self> {
-        let reader = match args {
-            CommandArgs::Compress(ref cargs) => match cargs.input_file.as_os_str().to_str() {
-                Some("-") => InputReader::new_stdin(),
-                _ => InputReader::new_file(&cargs.input_file)?,
-            },
-            CommandArgs::Decompress(ref dargs) => InputReader::new_decompressor(dargs)?,
-            CommandArgs::List(ref largs) => InputReader::new_file(&largs.input_file)?,
-        };
-
-        Ok(Self { bar: None, reader })
-    }
-
     pub fn with_progress(&mut self, input_len: Option<u64>) {
         let bar = ProgressBar::with_draw_target(input_len, ProgressDrawTarget::stderr_with_hz(5))
             .with_style(
@@ -128,51 +115,6 @@ pub enum Output {
 }
 
 impl Output {
-    pub fn new(args: &CommandArgs, force: bool, quiet: bool, stdout: bool) -> Result<Self> {
-        let writer: Box<dyn Write> = match args.out_path(stdout) {
-            Some(path) => {
-                let meta = fs::metadata(&path).ok();
-                if !force && path.exists() && !meta.is_some_and(|m| m.file_type().is_char_device())
-                {
-                    if quiet || args.is_input_stdin() {
-                        bail!("{} already exists; not overwritten", path.display());
-                    }
-
-                    eprint!("{} already exists; overwrite (y/n) ? ", path.display());
-                    io::stderr().flush()?;
-                    let mut buf = String::new();
-                    io::stdin()
-                        .read_line(&mut buf)
-                        .context("Failed to read stdin")?;
-                    if buf.trim_end() != "y" {
-                        bail!("{} already exists", path.display());
-                    }
-                }
-                let file = File::create(path).context("Failed to create output file")?;
-
-                Box::new(file)
-            }
-            None => {
-                let stdout = io::stdout();
-                if !force && stdout.is_terminal() {
-                    bail!("stdout is a terminal, aborting");
-                }
-
-                Box::new(stdout)
-            }
-        };
-
-        if let CommandArgs::Compress(ref cargs) = args {
-            let compressor = Compressor::new(cargs, writer)?;
-            Ok(Self::Compressor(compressor))
-        } else {
-            Ok(Self::Writer {
-                writer,
-                bytes_written: 0,
-            })
-        }
-    }
-
     pub fn bytes_written(&self) -> u64 {
         match &self {
             Self::Writer { bytes_written, .. } => *bytes_written,
