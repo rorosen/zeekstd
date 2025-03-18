@@ -17,6 +17,12 @@ use crate::{
     decompress::Decompressor,
 };
 
+// HumanBytes can mess up intendation if not formatted
+#[inline]
+fn format_bytes(n: u64) -> String {
+    format!("{}", HumanBytes(n))
+}
+
 #[derive(Debug, Subcommand)]
 #[command(arg_required_else_help(true))]
 pub enum Command {
@@ -182,11 +188,59 @@ impl Command {
                 eprintln!("{input_path} : {}", HumanBytes(bytes_read))
             }
             Self::List(ref args) => {
-                list_frames(args).context("Failed to list archive content")?;
+                let file = File::open(&args.input_file).context("Failed to open input file")?;
+                let seekable =
+                    Seekable::try_create().context("Failed to create seekable object")?;
+                let seekable = seekable.init_advanced(Box::new(file)).map_err(|c| {
+                    anyhow!(
+                        "Failed to initialize seekable object: {}",
+                        zstd_safe::get_error_name(c)
+                    )
+                })?;
+
+                let start_frame = args.start_frame(&seekable);
+                let end_frame = args.end_frame(&seekable);
+
+                if start_frame.is_none() && end_frame.is_none() {
+                    self.summarize_seekable(&seekable);
+                } else {
+                    list_frames(&seekable, start_frame, end_frame)?;
+                }
             }
         }
 
         Ok(())
+    }
+
+    fn summarize_seekable(&self, seekable: &Seekable) {
+        let num_frames = seekable.num_frames();
+        let compressed = (0..num_frames).fold(0u64, |acc, n| {
+            acc + seekable
+                .frame_compressed_size(n)
+                .expect("Frame index is never out of range") as u64
+        });
+        let decompressed_iter = (0..num_frames).map(|n| {
+            seekable
+                .frame_decompressed_size(n)
+                .expect("Frame index is never out of range") as u64
+        });
+        let max_frame_size = decompressed_iter.clone().max();
+        let decompressed = decompressed_iter.sum::<u64>();
+        let ratio = decompressed as f64 / compressed as f64;
+
+        eprintln!(
+            "{: <15} {: <15} {: <15} {: <15} {: <15} {: <15}",
+            "Frames", "Compressed", "Decompressed", "Max Frame Size", "Ratio", "Filename"
+        );
+        eprintln!(
+            "{: <15} {: <15} {: <15} {: <15} {: <15.3} {: <15}",
+            num_frames,
+            format_bytes(compressed),
+            format_bytes(decompressed),
+            format_bytes(max_frame_size.unwrap_or(0)),
+            ratio,
+            self.input_file_str().unwrap_or("")
+        );
     }
 }
 
@@ -318,104 +372,51 @@ impl Write for Output {
         }
     }
 }
-pub fn list_frames(args: &ListArgs) -> Result<()> {
-    // Humanbytes mess up intendation if not formatted
-    let format_bytes = |n: u64| format!("{}", HumanBytes(n));
-    let file = File::open(&args.input_file).context("Failed to open input file")?;
-    let seekable = Seekable::try_create().context("Failed to create seekable object")?;
-    let seekable = seekable.init_advanced(Box::new(file)).map_err(|c| {
+
+fn list_frames(
+    seekable: &Seekable,
+    start_frame: Option<u32>,
+    end_frame: Option<u32>,
+) -> Result<()> {
+    let map_error_code = |index, code| {
         anyhow!(
-            "Failed to initialize seekable object: {}",
-            zstd_safe::get_error_name(c)
+            "Failed to get data of frame {index}: {}",
+            zstd_safe::get_error_name(code)
         )
-    })?;
-
-    let start_frame = if args.from_frame.is_some() {
-        args.from_frame
-    } else {
-        args.from
-            .as_ref()
-            .map(|offset| seekable.offset_to_frame_index(offset.as_u64()))
     };
+    let map_index_err = |index, err| anyhow!("Failed to get data of frame {index}: {err}");
 
-    let end_frame = if args.to_frame.is_some() {
-        args.to_frame
-    } else if let Some(offset) = &args.to {
-        Some(seekable.offset_to_frame_index(offset.as_u64()))
-    } else {
-        args.num_frames.map(|num| start_frame.unwrap_or(0) + num)
-    };
+    let start = start_frame.unwrap_or(0);
+    let end = end_frame.unwrap_or_else(|| seekable.num_frames());
+    if start > end {
+        bail!("Start frame ({start}) cannot be greater than end frame ({end})");
+    }
 
-    if start_frame.is_none() && end_frame.is_none() {
-        let frames = seekable.num_frames();
-        let compressed = (0..frames).fold(0u64, |acc, n| {
-            acc + seekable
-                .frame_compressed_size(n)
-                .expect("Frame index is never out of range") as u64
-        });
-        let decompressed_iter = (0..frames).map(|n| {
-            seekable
-                .frame_decompressed_size(n)
-                .expect("Frame index is never out of range") as u64
-        });
-        let max_frame_size = decompressed_iter.clone().max();
-        let decompressed = decompressed_iter.sum::<u64>();
-        let ratio = decompressed as f64 / compressed as f64;
-
-        eprintln!(
-            "{: <15} {: <15} {: <15} {: <15} {: <15} {: <15}",
-            "Frames", "Compressed", "Decompressed", "Max Frame Size", "Ratio", "Filename"
-        );
-        eprintln!(
-            "{: <15} {: <15} {: <15} {: <15} {: <15.3} {: <15}",
-            frames,
-            format_bytes(compressed),
-            format_bytes(decompressed),
-            format_bytes(max_frame_size.unwrap_or(0)),
-            ratio,
-            args.input_file.as_os_str().to_str().unwrap_or("")
-        );
-    } else {
-        let map_error_code = |index, code| {
-            anyhow!(
-                "Failed to get data of frame {index}: {}",
-                zstd_safe::get_error_name(code)
-            )
-        };
-        let map_index_err = |index, err| anyhow!("Failed to get data of frame {index}: {err}");
-        let start = start_frame.unwrap_or(0);
-        let end = end_frame.unwrap_or_else(|| seekable.num_frames());
-
-        if start > end {
-            bail!("Start frame ({start}) cannot be greater than end frame ({end})");
-        }
-
+    eprintln!(
+        "{: <15} {: <15} {: <15} {: <20} {: <20}",
+        "Frame Index", "Compressed", "Decompressed", "Compressed Offset", "Decompressed Offset"
+    );
+    for n in start..end {
         eprintln!(
             "{: <15} {: <15} {: <15} {: <20} {: <20}",
-            "Frame Index", "Compressed", "Decompressed", "Compressed Offset", "Decompressed Offset"
+            n,
+            format_bytes(
+                seekable
+                    .frame_compressed_size(n)
+                    .map_err(|c| map_error_code(n, c))? as u64
+            ),
+            format_bytes(
+                seekable
+                    .frame_decompressed_size(n)
+                    .map_err(|c| map_error_code(n, c))? as u64
+            ),
+            seekable
+                .frame_compressed_offset(n)
+                .map_err(|err| map_index_err(n, err))?,
+            seekable
+                .frame_decompressed_offset(n)
+                .map_err(|err| map_index_err(n, err))?,
         );
-        for n in start..end {
-            eprintln!(
-                "{: <15} {: <15} {: <15} {: <20} {: <20}",
-                n,
-                format_bytes(
-                    seekable
-                        .frame_compressed_size(n)
-                        .map_err(|c| map_error_code(n, c))? as u64
-                ),
-                format_bytes(
-                    seekable
-                        .frame_decompressed_size(n)
-                        .map_err(|c| map_error_code(n, c))? as u64
-                ),
-                seekable
-                    .frame_compressed_offset(n)
-                    .map_err(|err| map_index_err(n, err))?,
-                seekable
-                    .frame_decompressed_offset(n)
-                    .map_err(|err| map_index_err(n, err))?,
-            );
-        }
     }
 
     Ok(())

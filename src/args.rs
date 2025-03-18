@@ -2,7 +2,7 @@ use std::{path::PathBuf, str::FromStr};
 
 use anyhow::bail;
 use clap::Parser;
-use zstd_safe::CompressionLevel;
+use zstd_safe::{seekable::Seekable, CompressionLevel};
 
 #[derive(Debug, Clone)]
 pub struct ByteValue(u64);
@@ -148,6 +148,29 @@ pub struct ListArgs {
 
     /// Input file.
     pub input_file: PathBuf,
+}
+
+impl ListArgs {
+    pub fn start_frame(&self, seekable: &Seekable) -> Option<u32> {
+        if self.from_frame.is_some() {
+            self.from_frame
+        } else {
+            self.from
+                .as_ref()
+                .map(|offset| seekable.offset_to_frame_index(offset.as_u64()))
+        }
+    }
+
+    pub fn end_frame(&self, seekable: &Seekable) -> Option<u32> {
+        if self.to_frame.is_some() {
+            self.to_frame
+        } else if let Some(offset) = &self.to {
+            Some(seekable.offset_to_frame_index(offset.as_u64()))
+        } else {
+            self.num_frames
+                .map(|num| self.start_frame(seekable).unwrap_or(0) + num)
+        }
+    }
 }
 
 #[cfg(test)]
