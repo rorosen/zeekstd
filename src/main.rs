@@ -40,27 +40,15 @@ struct Cli {
     compress_args: CompressArgs,
 }
 
-impl Cli {
-    fn show_progress(&self) -> bool {
-        !self.quiet && !self.stdout && !self.no_progress
-    }
-
-    fn print_summary(&self) -> bool {
-        !self.quiet && !self.stdout
-    }
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let show_progress = cli.show_progress();
-    let print_summary = cli.print_summary();
     let command = cli.command.unwrap_or(Command::Compress(cli.compress_args));
-
     let mut input = command.input()?;
     let mut output = command.output(cli.force, cli.quiet, cli.stdout)?;
 
     if matches!(command, Command::Compress(_) | Command::Decompress(_)) {
-        if show_progress {
+        // Whether to show the progress counter
+        if !cli.quiet && !cli.stdout && !cli.no_progress {
             input.with_progress(command.input_len());
         }
 
@@ -68,7 +56,8 @@ fn main() -> Result<()> {
         output.flush().context("Failed to flush output")?;
     }
 
-    if print_summary {
+    // Only print summary if not quiet
+    if !cli.quiet {
         command.print_summary(input.bytes_read(), output.bytes_written(), cli.stdout)?;
     }
 

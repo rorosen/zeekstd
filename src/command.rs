@@ -38,11 +38,11 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn is_input_stdin(&self) -> bool {
+    fn is_input_stdin(&self) -> bool {
         self.input_file_str() == Some("-")
     }
 
-    pub fn input_file(&self) -> &Path {
+    fn input_file(&self) -> &Path {
         match self {
             Command::Compress(CompressArgs { input_file, .. })
             | Command::Decompress(DecompressArgs { input_file, .. })
@@ -50,7 +50,7 @@ impl Command {
         }
     }
 
-    pub fn input_file_str(&self) -> Option<&str> {
+    fn input_file_str(&self) -> Option<&str> {
         self.input_file().as_os_str().to_str()
     }
 
@@ -62,7 +62,7 @@ impl Command {
         fs::metadata(self.input_file()).map(|m| m.len()).ok()
     }
 
-    pub fn out_path(&self, stdout: bool) -> Option<PathBuf> {
+    fn out_path(&self, stdout: bool) -> Option<PathBuf> {
         let determine_out_path = |input_file: &PathBuf| {
             if self.is_input_stdin() {
                 return None;
@@ -171,7 +171,7 @@ impl Command {
         };
 
         match self {
-            Self::Compress(_) => {
+            Self::Compress(_) if !stdout => {
                 eprintln!(
                     "{input_path} : {ratio:.2}% ( {read} => {written}, {output_path})",
                     ratio = 100. / bytes_read as f64 * bytes_written as f64,
@@ -184,7 +184,7 @@ impl Command {
                         .unwrap_or("STDOUT")
                 )
             }
-            Self::Decompress(_) => {
+            Self::Decompress(_) if !stdout => {
                 eprintln!("{input_path} : {}", HumanBytes(bytes_read))
             }
             Self::List(ref args) => {
@@ -207,6 +207,7 @@ impl Command {
                     list_frames(&seekable, start_frame, end_frame)?;
                 }
             }
+            _ => (),
         }
 
         Ok(())
