@@ -38,7 +38,6 @@
           };
 
           checks = {
-            test = pkgs.callPackage ./test.nix { inherit (config.packages) zeekstd; };
             clippy = config.packages.zeekstd.overrideAttrs (
               _: previousAttrs: {
                 pname = previousAttrs.pname + "-clippy";
@@ -53,7 +52,7 @@
                 checkPhase = "cargo fmt --check";
               }
             );
-          };
+          } // (import ./tests { pkgs = pkgs.extend (_: _: { inherit (config.packages) zeekstd; }); });
         };
     };
 }
