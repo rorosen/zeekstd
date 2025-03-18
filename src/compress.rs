@@ -64,8 +64,8 @@ impl<W: Write> Write for Compressor<W> {
                         zstd_safe::get_error_name(c)
                     ))
                 })?;
-            let n = self.out.write(out_buffer.as_slice())?;
-            self.bytes_written += n as u64;
+            self.out.write_all(out_buffer.as_slice())?;
+            self.bytes_written += out_buffer.as_slice().len() as u64;
         }
 
         Ok(in_buffer.pos())
