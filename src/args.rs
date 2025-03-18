@@ -1,12 +1,7 @@
-use std::{
-    ffi::OsString,
-    fs,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{path::PathBuf, str::FromStr};
 
 use anyhow::bail;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use zstd_safe::CompressionLevel;
 
 #[derive(Debug, Clone)]
@@ -71,88 +66,6 @@ impl FromStr for ByteOffset {
         };
 
         Ok(this)
-    }
-}
-
-#[derive(Debug, Subcommand)]
-#[command(arg_required_else_help(true))]
-pub enum CommandArgs {
-    /// Compress INPUT_FILE; reads from STDIN if INPUT_FILE is `-` or not provided.
-    #[clap(alias = "c")]
-    Compress(CompressArgs),
-    /// Decompress INPUT_FILE.
-    #[clap(alias = "d")]
-    Decompress(DecompressArgs),
-    /// Print information about seekable Zstandard-compressed files.
-    #[clap(alias = "l")]
-    List(ListArgs),
-}
-
-impl CommandArgs {
-    pub fn is_input_stdin(&self) -> bool {
-        self.input_file_str() == Some("-")
-    }
-
-    pub fn input_file(&self) -> &Path {
-        match self {
-            CommandArgs::Compress(CompressArgs { input_file, .. })
-            | CommandArgs::Decompress(DecompressArgs { input_file, .. })
-            | CommandArgs::List(ListArgs { input_file, .. }) => input_file,
-        }
-    }
-
-    pub fn input_file_str(&self) -> Option<&str> {
-        self.input_file().as_os_str().to_str()
-    }
-
-    pub fn input_len(&self) -> Option<u64> {
-        if self.is_input_stdin() {
-            return None;
-        }
-
-        fs::metadata(self.input_file()).map(|m| m.len()).ok()
-    }
-
-    pub fn out_path(&self, stdout: bool) -> Option<PathBuf> {
-        let determine_out_path = |input_file: &PathBuf| {
-            if self.is_input_stdin() {
-                return None;
-            }
-
-            // TODO: Use `add_extension` when stable: https://github.com/rust-lang/rust/issues/127292
-            let extension = input_file.extension().map_or_else(
-                || OsString::from("zst"),
-                |e| {
-                    let mut ext = OsString::from(e);
-                    ext.push(".zst");
-                    ext
-                },
-            );
-
-            Some(input_file.with_extension(extension))
-        };
-
-        if stdout {
-            return None;
-        }
-
-        match &self {
-            CommandArgs::Compress(CompressArgs {
-                input_file,
-                output_file,
-                ..
-            }) => output_file
-                .clone()
-                .or_else(|| determine_out_path(input_file)),
-            CommandArgs::Decompress(DecompressArgs {
-                input_file,
-                output_file,
-                ..
-            }) => output_file
-                .clone()
-                .or_else(|| Some(input_file.with_extension(""))),
-            CommandArgs::List(_) => None,
-        }
     }
 }
 

@@ -1,13 +1,16 @@
 use std::io::{self, Write};
 
 use anyhow::{Context, Result};
+use args::CompressArgs;
 use clap::Parser;
-use indicatif::HumanBytes;
-use zeekstd::{
-    args::{CommandArgs, CompressArgs},
-    list::list_frames,
-    Input, Output,
-};
+use command::Command;
+
+mod args;
+mod command;
+mod compress;
+mod decompress;
+#[cfg(test)]
+mod tests;
 
 /// Compress and decompress data using the Zstandard Seekable Format.
 #[derive(Debug, Parser)]
@@ -31,7 +34,7 @@ struct Cli {
     no_progress: bool,
 
     #[clap(subcommand)]
-    command_args: Option<CommandArgs>,
+    command: Option<Command>,
 
     #[clap(flatten)]
     compress_args: CompressArgs,
@@ -51,54 +54,22 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let show_progress = cli.show_progress();
     let print_summary = cli.print_summary();
-    let command_args = cli
-        .command_args
-        .unwrap_or(CommandArgs::Compress(cli.compress_args));
+    let command = cli.command.unwrap_or(Command::Compress(cli.compress_args));
 
-    if let CommandArgs::List(ref args) = command_args {
-        list_frames(args).context("Failed to analyze archive")?;
-        return Ok(());
+    let mut input = command.input()?;
+    let mut output = command.output(cli.force, cli.quiet, cli.stdout)?;
+
+    if matches!(command, Command::Compress(_) | Command::Decompress(_)) {
+        if show_progress {
+            input.with_progress(command.input_len());
+        }
+
+        io::copy(&mut input, &mut output)?;
+        output.flush().context("Failed to flush output")?;
     }
-
-    let mut input = Input::new(&command_args)?;
-    let mut output = Output::new(&command_args, cli.force, cli.quiet, cli.stdout)?;
-
-    if show_progress {
-        input.with_progress(command_args.input_len());
-    }
-
-    io::copy(&mut input, &mut output)?;
-    output.flush().context("Failed to flush output")?;
 
     if print_summary {
-        let input_path = match command_args.input_file_str() {
-            Some("-") => "STDIN",
-            Some(path) => path,
-            None => "¯\\_(ツ)_/¯",
-        };
-        let bytes_read = input.bytes_read();
-
-        match command_args {
-            CommandArgs::Compress(_) => {
-                let bytes_written = output.bytes_written();
-
-                eprintln!(
-                    "{input_path} : {ratio:.2}% ( {read} => {written}, {output_path})",
-                    ratio = 100. / bytes_read as f64 * bytes_written as f64,
-                    read = HumanBytes(bytes_read),
-                    written = HumanBytes(output.bytes_written()),
-                    output_path = command_args
-                        .out_path(cli.stdout)
-                        .as_ref()
-                        .and_then(|o| o.as_os_str().to_str())
-                        .unwrap_or("STDOUT")
-                )
-            }
-            CommandArgs::Decompress(_) => eprintln!("{input_path} : {}", HumanBytes(bytes_read)),
-            CommandArgs::List(_) => {
-                unreachable!("The program never gets here when command is list")
-            }
-        }
+        command.print_summary(input.bytes_read(), output.bytes_written(), cli.stdout)?;
     }
 
     Ok(())

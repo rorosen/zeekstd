@@ -17,12 +17,14 @@ runCommand "zeekstd-test"
     # Compress via input file and stdin
     zeekstd numbers.txt
     cat numbers.txt | zeekstd -o numbers.stdin.zst
-    # Verify both compressions yield the same result
+    zeekstd -c numbers.txt > numbers.stdout.zst
+    # All compressions yield the same result
     cmp numbers.txt.zst numbers.stdin.zst
+    cmp numbers.txt.zst numbers.stdout.zst
     # Decompress with zeekstd and zstd
     zeekstd decompress numbers.txt.zst -o numbers.txt.decompressed
     zstd -d numbers.txt.zst -o numbers.txt.decompressed-zstd
-    # Verify both decompressions yield the same result
+    # Verify both decompressions restore the original
     cmp numbers.txt numbers.txt.decompressed
     cmp numbers.txt numbers.txt.decompressed-zstd
     # Decompress partially
