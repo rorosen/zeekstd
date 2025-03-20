@@ -7,8 +7,4 @@ edition = "2021"
 anyhow = "1.0.97"
 clap = { version = "4.5.32", features = ["derive"] }
 indicatif = "0.17.11"
-# TODO: Use official release once available
-zstd-safe = { git = "https://github.com/gyscos/zstd-rs", rev = "739b040997dca5899cafef3b3be73cd5adf4a651", features = [
-  "std",
-  "seekable",
-] }
+zstd-safe = { version = "7.2.4", features = ["std", "seekable"] }

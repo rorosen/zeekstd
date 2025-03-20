@@ -16,13 +16,7 @@ rustPlatform.buildRustPackage {
     ".lock"
   ];
 
-  cargoLock = {
-    lockFile = ./Cargo.lock;
-    outputHashes."zstd-safe-7.2.3" = "sha256-6D/3urUXvZePoX/t2q+0uFsnyRscUqypTm/LKHMPpsw=";
-  };
-
-  stripAllList = [ "bin" ];
-
+  cargoLock.lockFile = ./Cargo.lock;
   meta = with lib; {
     homepage = "https://github.com/rorosen/zeekstd";
     license = licenses.bsd2;
