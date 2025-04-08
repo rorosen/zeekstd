@@ -1,6 +1,6 @@
 use std::io::{self, Read, Seek};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use zstd_safe::seekable::{AdvancedSeekable, Seekable};
 
 use crate::args::DecompressArgs;
@@ -21,7 +21,7 @@ impl<F> Decompressor<'_, F> {
             Seekable::try_create().context("Failed to create seekable decompression object")?;
         let seekable = seekable.init_advanced(Box::new(src)).map_err(|c| {
             anyhow!(
-                "Failed to initialize seekable decompression object: {}",
+                "Failed to initialize seekable decompression object: {c} {}",
                 zstd_safe::get_error_name(c)
             )
         })?;

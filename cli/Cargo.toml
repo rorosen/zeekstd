@@ -1,0 +1,15 @@
+[package]
+name = "zeekstd_cli"
+version = "0.2.3"
+edition = "2024"
+
+[[bin]]
+name = "zeekstd"
+path = "src/main.rs"
+
+[dependencies]
+zstd-safe = { version = "7.2.4", features = ["std", "seekable"] }
+
+anyhow = "1.0.97"
+clap = { version = "4.5.32", features = ["derive"] }
+indicatif = "0.17.11"

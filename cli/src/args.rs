@@ -2,7 +2,7 @@ use std::{path::PathBuf, str::FromStr};
 
 use anyhow::bail;
 use clap::Parser;
-use zstd_safe::{seekable::Seekable, CompressionLevel};
+use zstd_safe::{CompressionLevel, seekable::Seekable};
 
 #[derive(Debug, Clone)]
 pub struct ByteValue(u64);

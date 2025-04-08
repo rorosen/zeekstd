@@ -3,8 +3,8 @@ use std::{
     io::{self, Write},
 };
 
-use anyhow::{anyhow, Context, Result};
-use zstd_safe::{seekable::SeekableCStream, InBuffer, OutBuffer};
+use anyhow::{Context, Result, anyhow};
+use zstd_safe::{InBuffer, OutBuffer, seekable::SeekableCStream};
 
 use crate::args::CompressArgs;
 

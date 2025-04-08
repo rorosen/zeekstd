@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use indicatif::{HumanBytes, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use zstd_safe::seekable::Seekable;
@@ -106,12 +106,12 @@ impl Command {
 
     pub fn input(&self) -> Result<Input<'_>> {
         let reader = match self {
-            Self::Compress(ref args) => match self.input_file_str() {
+            Self::Compress(args) => match self.input_file_str() {
                 Some("-") => InputReader::new_stdin(),
                 _ => InputReader::new_file(&args.input_file)?,
             },
-            Self::Decompress(ref args) => InputReader::new_decompressor(args)?,
-            Self::List(ref args) => InputReader::new_file(&args.input_file)?,
+            Self::Decompress(args) => InputReader::new_decompressor(args)?,
+            Self::List(args) => InputReader::new_file(&args.input_file)?,
         };
 
         Ok(Input { bar: None, reader })
@@ -152,7 +152,7 @@ impl Command {
             }
         };
 
-        if let Self::Compress(ref cargs) = self {
+        if let Self::Compress(cargs) = self {
             let compressor = Compressor::new(cargs, writer)?;
             Ok(Output::Compressor(compressor))
         } else {
@@ -187,7 +187,7 @@ impl Command {
             Self::Decompress(_) if !stdout => {
                 eprintln!("{input_path} : {}", HumanBytes(bytes_read))
             }
-            Self::List(ref args) => {
+            Self::List(args) => {
                 let file = File::open(&args.input_file).context("Failed to open input file")?;
                 let seekable =
                     Seekable::try_create().context("Failed to create seekable object")?;
