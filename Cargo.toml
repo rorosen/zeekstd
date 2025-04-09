@@ -8,5 +8,5 @@ license = "BSD-2-Clause"
 homepage = "https://github.com/rorosen/zeekstd"
 repository = "https://github.com/rorosen/zeekstd"
 readme = "README.md"
-keywords = [ "zstd", "zstandard", "compression", "zstd seekable format" ]
+keywords = [ "zstd", "zstandard", "compression", "zstd-seekable-format" ]
 categories = [ "compression" ]
