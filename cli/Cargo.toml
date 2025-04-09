@@ -1,15 +1,21 @@
 [package]
 name = "zeekstd_cli"
 version = "0.2.3"
-edition = "2024"
+publish = false
+edition.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
 
 [[bin]]
 name = "zeekstd"
 path = "src/main.rs"
 
 [dependencies]
-zstd-safe = { version = "7.2.4", features = ["std", "seekable"] }
-
 anyhow = "1.0.97"
 clap = { version = "4.5.32", features = ["derive"] }
 indicatif = "0.17.11"
+zstd-safe = { version = "7.2.4", features = ["std", "seekable"] }
