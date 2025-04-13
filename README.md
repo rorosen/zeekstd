@@ -9,19 +9,19 @@ decompress at most a frame's worth of extra data, instead of the entire archive.
 
 ## Compression
 
-Use the `Compressor` struct for streaming data compression.
+Use the `Encoder` struct for streaming data compression.
 
 ```rust no_run
 use std::{fs::File, io};
-use zeekstd::Compressor;
+use zeekstd::Encoder;
 
 fn main() -> zeekstd::Result<()> {
     let mut input = File::open("foo")?;
     let output = File::create("foo.zst")?;
-    let mut compressor = Compressor::new(output)?;
-    io::copy(&mut input, &mut compressor)?;
+    let mut encoder = Encoder::new(output)?;
+    io::copy(&mut input, &mut encoder)?;
     // End compression and write the seek table
-    compressor.finish()?;
+    encoder.finish()?;
 
     Ok(())
 }
@@ -29,17 +29,17 @@ fn main() -> zeekstd::Result<()> {
 
 ## Decompression
 
-Streaming decompression can be achieved using the `Decompressor` struct.
+Streaming decompression can be achieved using the `Decoder` struct.
 
 ```rust no_run
-use std::{fs::File, io::{self, BufReader}};
-use zeekstd::Decompressor;
+use std::{fs::File, io};
+use zeekstd::Decoder;
 
 fn main() -> zeekstd::Result<()> {
     let input = File::open("seekable.zst")?;
     let mut output = File::create("data")?;
-    let mut decompressor = Decompressor::new(BufReader::new(input))?;
-    io::copy(&mut decompressor, &mut output)?;
+    let mut decoder = Decoder::from_seekable(input)?;
+    io::copy(&mut decoder, &mut output)?;
 
     Ok(())
 }

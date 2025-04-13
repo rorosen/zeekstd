@@ -13,32 +13,32 @@
 //!
 //! # Compression
 //!
-//! Use the [`Compressor`] struct for streaming data compression.
+//! Use the [`Encoder`] struct for streaming data compression.
 //!
 //! ```no_run
 //! use std::{fs::File, io};
-//! use zeekstd::Compressor;
+//! use zeekstd::Encoder;
 //!
 //! let mut input = File::open("foo")?;
 //! let output = File::create("foo.zst")?;
-//! let mut compressor = Compressor::new(output)?;
-//! io::copy(&mut input, &mut compressor)?;
+//! let mut encoder = Encoder::new(output)?;
+//! io::copy(&mut input, &mut encoder)?;
 //! // End compression and write the seek table
-//! compressor.finish()?;
+//! encoder.finish()?;
 //! # Ok::<(), zeekstd::Error>(())
 //! ```
 //! # Decompression
 //!
-//! Streaming decompression can be achieved using the [`Decompressor`] struct.
+//! Streaming decompression can be achieved using the [`Decoder`] struct.
 //!
 //! ```no_run
 //! use std::{fs::File, io::{self, BufReader}};
-//! use zeekstd::Decompressor;
+//! use zeekstd::Decoder;
 //!
 //! let input = File::open("seekable.zst")?;
 //! let mut output = File::create("data")?;
-//! let mut decompressor = Decompressor::new(BufReader::new(input))?;
-//! io::copy(&mut decompressor, &mut output)?;
+//! let mut decoder = Decoder::from_seekable(input)?;
+//! io::copy(&mut decoder, &mut output)?;
 //! # Ok::<(), zeekstd::Error>(())
 //! ```
 //!
@@ -46,12 +46,12 @@
 //!
 //! ```no_run
 //! # use std::{fs::File, io::{self, BufReader}};
-//! # use zeekstd::Decompressor;
+//! # use zeekstd::Decoder;
 //! # let seekable = File::open("seekable.zst")?;
-//! # let mut decompressor = Decompressor::new(BufReader::new(seekable))?;
-//! decompressor.set_start_frame(2);
-//! decompressor.set_end_frame(3);
-//! io::copy(&mut decompressor, &mut io::stdout())?;
+//! # let mut decoder = Decoder::from_seekable(seekable)?;
+//! decoder.set_lower_frame(2);
+//! decoder.set_upper_frame(3);
+//! io::copy(&mut decoder, &mut io::stdout())?;
 //! # Ok::<(), zeekstd::Error>(())
 //! ```
 //!
@@ -64,20 +64,28 @@ mod decompress;
 mod error;
 mod frame_log;
 mod seek_table;
+mod seekable;
 
-pub use compress::{Compressor, CompressorBuilder, FrameSizePolicy};
-pub use decompress::{Decompressor, DecompressorBuilder};
+pub use compress::{CompressOptions, Compressor, FrameSizePolicy, Encoder};
+pub use decompress::{DecompressOptions, Decompressor, Decoder};
 pub use error::{Error, Result};
-pub use frame_log::{FrameLog, FrameLogReader};
+pub use frame_log::FrameLog;
 pub use seek_table::SeekTable;
 // Re-export as it's part of the API.
 pub use zstd_safe::CompressionLevel;
 
-const SKIPPABLE_MAGIC_NUMBER: u32 = zstd_safe::zstd_sys::ZSTD_MAGIC_SKIPPABLE_START | 0xE;
-const SKIPPABLE_HEADER_SIZE: u32 = 8;
-const SEEK_TABLE_FOOTER_SIZE: u32 = 9;
-const SEEKABLE_MAGIC_NUMBER: u32 = 0x8F92EAB1;
-const SEEKABLE_MAX_FRAMES: usize = 0x8000000;
+/// The skippable magic number of a skippable frame containing the seek table.
+pub const SKIPPABLE_MAGIC_NUMBER: u32 = zstd_safe::zstd_sys::ZSTD_MAGIC_SKIPPABLE_START | 0xE;
+/// The magic number placed at the end of the seek table.
+pub const SEEKABLE_MAGIC_NUMBER: u32 = 0x8F92EAB1;
+/// The size of skippable frame header.
+pub const SKIPPABLE_HEADER_SIZE: usize = 8;
+/// The size of the seekable footer a the end of the seek table.
+pub const SEEK_TABLE_FOOTER_SIZE: usize = 9;
+/// The maximum number of frames in a seekable archive.
+pub const SEEKABLE_MAX_FRAMES: usize = 0x8000000;
+/// The maximum size of the decompressed data of a frame.
+pub const SEEKABLE_MAX_FRAME_SIZE: usize = 0x40000000;
 
 #[doc = include_str!("../../README.md")]
 #[cfg(doctest)]
@@ -91,10 +99,10 @@ mod tests {
     use zstd_safe::{CCtx, CParameter};
 
     use crate::{
-        compress::{Compressor, CompressorBuilder, FrameSizePolicy},
-        decompress::{Decompressor, DecompressorBuilder},
+        compress::{CompressOptions, Encoder, FrameSizePolicy},
+        decompress::{Decoder, DecompressOptions},
         error::Result,
-        frame_log::{FrameLog, FrameLogReader},
+        frame_log::FrameLog,
         seek_table::SeekTable,
     };
 
@@ -136,10 +144,9 @@ mod tests {
 
         let mut cursor = Cursor::new(Vec::with_capacity(
             // The size of the seek table
-            12 * 1024 + SKIPPABLE_HEADER_SIZE as usize + SEEK_TABLE_FOOTER_SIZE as usize,
+            12 * 1024 + SKIPPABLE_HEADER_SIZE + SEEK_TABLE_FOOTER_SIZE,
         ));
-        let mut fl_reader = FrameLogReader::from(fl);
-        io::copy(&mut fl_reader, &mut cursor)?;
+        io::copy(&mut fl, &mut cursor)?;
 
         let mut src = BufReader::new(cursor);
         let st = SeekTable::from_seekable(&mut src)?;
@@ -148,16 +155,15 @@ mod tests {
         let mut c_offset = 0;
         let mut d_offset = 0;
         for i in 1..=1024 {
-            // dbg!(i);
-            assert_eq!(st.frame_compressed_size(i - 1)?, i as u64 * 5);
-            assert_eq!(st.frame_decompressed_size(i - 1)?, i as u64 * 10);
-            assert_eq!(st.frame_compressed_start(i - 1)?, c_offset);
-            assert_eq!(st.frame_decompressed_start(i - 1)?, d_offset);
+            assert_eq!(st.frame_checksum(i - 1)?, Some(i));
             assert_eq!(st.frame_compressed_end(i - 1)?, c_offset + i as u64 * 5);
+            assert_eq!(st.frame_compressed_size(i - 1)?, i as u64 * 5);
+            assert_eq!(st.frame_compressed_start(i - 1)?, c_offset);
             assert_eq!(st.frame_decompressed_end(i - 1)?, d_offset + i as u64 * 10);
+            assert_eq!(st.frame_decompressed_size(i - 1)?, i as u64 * 10);
+            assert_eq!(st.frame_decompressed_start(i - 1)?, d_offset);
             assert_eq!(st.frame_index_at_compressed_offset(c_offset), i - 1);
             assert_eq!(st.frame_index_at_decompressed_offset(d_offset), i - 1);
-            assert_eq!(st.frame_checksum(i - 1)?, i);
             c_offset += i as u64 * 5;
             d_offset += i as u64 * 10;
         }
@@ -169,16 +175,16 @@ mod tests {
     fn seekable_cycle() -> Result<()> {
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
-        let mut compressor = Compressor::new(&mut seekable)?;
+        let mut encoder = Encoder::new(&mut seekable)?;
 
         // Compress the input
-        io::copy(&mut input, &mut compressor)?;
-        compressor.finish()?;
+        io::copy(&mut input, &mut encoder)?;
+        encoder.finish()?;
 
-        let mut decompressor = Decompressor::new(BufReader::new(seekable))?;
+        let mut decoder = DecompressOptions::new().into_decoder(seekable)?;
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
         // Decompress the complete seekable
-        io::copy(&mut decompressor, &mut output)?;
+        io::copy(&mut decoder, &mut output)?;
         output.set_position(0);
 
         let mut num_line = 0;
@@ -193,91 +199,28 @@ mod tests {
     }
 
     #[test]
-    fn seekable_partly_decompression() -> Result<()> {
+    fn seekable_partly_decompression() {
         const LINES_IN_FRAME: u32 = 1143;
 
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
-        let mut compressor = CompressorBuilder::new()
-            .frame_size_policy(FrameSizePolicy::decompressed(LINE_LEN * LINES_IN_FRAME)?)
-            .build(&mut seekable)?;
+        let mut encoder = CompressOptions::new()
+            .frame_size_policy(FrameSizePolicy::Decompressed(LINE_LEN * LINES_IN_FRAME))
+            .into_encoder(&mut seekable)
+            .unwrap();
 
         // Compress the input
-        io::copy(&mut input, &mut compressor)?;
-        compressor.finish()?;
+        io::copy(&mut input, &mut encoder).unwrap();
+        encoder.finish().unwrap();
 
-        // Decompress frames 6 to 9 (inclusive) initially
-        let mut decompressor = DecompressorBuilder::new()
-            .start_frame(6)
-            .end_frame(9)
-            .build(BufReader::new(seekable))?;
+        let mut decoder = Decoder::from_seekable(seekable).unwrap();
 
         // Add one for the last frame
         let num_frames = LINES_IN_DOC / LINES_IN_FRAME + 1;
-        assert_eq!(num_frames, decompressor.num_frames());
+        assert_eq!(num_frames, decoder.num_frames());
 
-        let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_FRAME) as usize * 4));
-        io::copy(&mut decompressor, &mut output)?;
-        output.set_position(0);
-        let mut num_line = 6 * LINES_IN_FRAME;
-        for line in output.lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
-            num_line += 1;
-        }
-        assert_eq!(num_line, 10 * LINES_IN_FRAME);
-
-        // Decompress until frame 6 (inclusive)
-        decompressor.set_start_frame(0);
-        decompressor.set_end_frame(6);
-        let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_FRAME) as usize * 7));
-        io::copy(&mut decompressor, &mut output)?;
-        output.set_position(0);
-        let mut num_line = 0;
-        for line in output.lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
-            num_line += 1;
-        }
-        assert_eq!(num_line, 7 * LINES_IN_FRAME);
-
-        // Decompress the last 13 frames
-        decompressor.set_start_frame(num_frames - 14);
-        decompressor.set_end_frame(num_frames - 1);
-        let mut output = Cursor::new(Vec::with_capacity(
-            (LINE_LEN * LINES_IN_FRAME) as usize * 13,
-        ));
-        io::copy(&mut decompressor, &mut output)?;
-        output.set_position(0);
-        let mut num_line = (num_frames - 14) * LINES_IN_FRAME;
-        for line in output.lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
-            num_line += 1;
-        }
-        assert_eq!(num_line, LINES_IN_DOC);
-
-        // Start frame greater end frame, expect zero bytes read
-        decompressor.set_start_frame(9);
-        decompressor.set_end_frame(8);
-        let mut output = Cursor::new(vec![]);
-        let n = io::copy(&mut decompressor, &mut output)?;
-        assert_eq!(0, n);
-        output.set_position(0);
-        assert_eq!(0, output.lines().collect::<Vec<_>>().len());
-
-        // Start frame index too large
-        decompressor.set_start_frame(num_frames);
-        let mut output = Cursor::new(vec![]);
-        assert!(io::copy(&mut decompressor, &mut output).is_err());
-
-        // End frame index too large
-        decompressor.set_start_frame(0);
-        decompressor.set_end_frame(num_frames);
-        let mut output = Cursor::new(vec![]);
-        assert!(io::copy(&mut decompressor, &mut output).is_err());
-
-        // Decompress all frames
-        decompressor.set_end_frame(num_frames - 1);
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
-        io::copy(&mut decompressor, &mut output)?;
+        io::copy(&mut decoder, &mut output).unwrap();
         output.set_position(0);
 
         let mut num_line = 0;
@@ -288,7 +231,67 @@ mod tests {
         assert_eq!(num_line, LINES_IN_DOC);
         assert_eq!(input.get_ref(), output.get_ref());
 
-        Ok(())
+        // Decompress until frame 6 (inclusive)
+        decoder.set_lower_frame(0).unwrap();
+        decoder.set_upper_frame(6);
+        let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_FRAME) as usize * 7));
+        io::copy(&mut decoder, &mut output).unwrap();
+        output.set_position(0);
+        let mut num_line = 0;
+        for line in output.lines().map(|l| l.unwrap()) {
+            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            num_line += 1;
+        }
+        assert_eq!(num_line, 7 * LINES_IN_FRAME);
+
+        // Decompress the last 13 frames
+        decoder.set_lower_frame(num_frames - 14).unwrap();
+        decoder.set_upper_frame(num_frames - 1);
+        let mut output = Cursor::new(Vec::with_capacity(
+            (LINE_LEN * LINES_IN_FRAME) as usize * 13,
+        ));
+        io::copy(&mut decoder, &mut output).unwrap();
+        output.set_position(0);
+        let mut num_line = (num_frames - 14) * LINES_IN_FRAME;
+        for line in output.lines().map(|l| l.unwrap()) {
+            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            num_line += 1;
+        }
+        assert_eq!(num_line, LINES_IN_DOC);
+
+        // Start frame greater end frame, expect zero bytes read
+        decoder.set_lower_frame(9).unwrap();
+        decoder.set_upper_frame(8);
+        let mut output = Cursor::new(vec![]);
+        let n = io::copy(&mut decoder, &mut output).unwrap();
+        assert_eq!(0, n);
+        output.set_position(0);
+        assert_eq!(0, output.lines().collect::<Vec<_>>().len());
+
+        // Start frame index too large
+        decoder.set_lower_frame(num_frames).unwrap();
+        let mut output = Cursor::new(vec![]);
+        assert!(io::copy(&mut decoder, &mut output).is_err());
+
+        // End frame index too large
+        decoder.set_lower_frame(0).unwrap();
+        decoder.set_upper_frame(num_frames);
+        let mut output = Cursor::new(vec![]);
+        assert!(io::copy(&mut decoder, &mut output).is_err());
+
+        // Decompress all frames
+        decoder.set_upper_frame(num_frames - 1);
+        let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
+        io::copy(&mut decoder, &mut output).unwrap();
+        output.set_position(0);
+
+        let mut num_line = 0;
+        for line in output.clone().lines().map(|l| l.unwrap()) {
+            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            num_line += 1;
+        }
+        assert_eq!(num_line, LINES_IN_DOC);
+        assert_eq!(input.get_ref(), output.get_ref());
     }
 
     #[test]
@@ -301,20 +304,20 @@ mod tests {
         let mut cctx = CCtx::create();
         cctx.set_parameter(CParameter::WindowLog(window_log))?;
         cctx.set_parameter(CParameter::EnableLongDistanceMatching(true))?;
-        let mut compressor = CompressorBuilder::new()
+        let mut encoder = CompressOptions::new()
             .cctx(cctx)
             .prefix(old.get_ref())
-            .build(&mut patch)?;
+            .into_encoder(&mut patch)?;
 
         // Create a binary diff
-        io::copy(&mut new, &mut compressor)?;
-        compressor.finish()?;
+        io::copy(&mut new, &mut encoder)?;
+        encoder.finish()?;
 
-        let mut decompressor = DecompressorBuilder::new()
+        let mut decoder = DecompressOptions::new()
             .prefix(old.get_ref())
-            .build(BufReader::new(patch))?;
+            .into_decoder(BufReader::new(patch))?;
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
-        io::copy(&mut decompressor, &mut output)?;
+        io::copy(&mut decoder, &mut output)?;
         output.set_position(0);
 
         let mut num_line = 0;

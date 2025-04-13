@@ -1,13 +1,9 @@
-use std::{
-    fmt::Debug,
-    io::{BufRead, Seek, SeekFrom},
-};
-
 use zstd_safe::zstd_sys::ZSTD_ErrorCode;
 
 use crate::{
     SEEK_TABLE_FOOTER_SIZE, SEEKABLE_MAGIC_NUMBER, SKIPPABLE_HEADER_SIZE, SKIPPABLE_MAGIC_NUMBER,
     error::{Error, Result},
+    seekable::Seekable,
 };
 
 macro_rules! read_le32 {
@@ -23,116 +19,209 @@ macro_rules! read_le32 {
 struct Entry {
     c_offset: u64,
     d_offset: u64,
-    checksum: u32,
+    checksum: Option<u32>,
 }
 
-/// Holds information of the frames of a seekable archive.
-///
-/// The `SeekTable` allows decompressors to jump directly to the beginning of frames. It is placed
-/// in a Zstandard skippable frame at the end of a seekable archive.
 #[derive(Debug, Clone)]
-pub struct SeekTable {
-    entries: Vec<Entry>,
+struct Entries(Vec<Entry>);
+
+impl core::ops::Index<u32> for Entries {
+    type Output = Entry;
+
+    fn index(&self, index: u32) -> &Self::Output {
+        let idx = usize::try_from(index).expect("Frame index can be transformed to uisze");
+        &self.0[idx]
+    }
+}
+
+/// A helper struct that parses the bytes of a seek table.
+#[derive(Debug)]
+struct SeekTableParser {
     with_checksum: bool,
-    num_frames: u32,
+    num_frames: usize,
+    size_per_frame: usize,
+    seek_table_size: usize,
+    entries: Entries,
+    c_offset: u64,
+    d_offset: u64,
 }
 
-impl SeekTable {
-    /// Get the number of frames of the `SeekTable`.
-    pub fn num_frames(&self) -> u32 {
-        self.num_frames
-    }
-
-    /// Whether the frames contain a checksum.
-    pub fn with_checksum(&self) -> bool {
-        self.with_checksum
-    }
-}
-
-impl SeekTable {
-    /// Create a new `SeekTable` from a seekable archive.
+impl SeekTableParser {
+    /// Create a [`SeekTableParser`] from the footer of a seek table.
+    ///
+    /// The footer consists of the last 9 bytes of a seek table.
     ///
     /// # Errors
     ///
-    /// Returns an error if validation of the `SeekTable` fails.
-    pub fn from_seekable<S>(src: &mut S) -> Result<Self>
-    where
-        S: Seek + BufRead,
-    {
-        src.seek(SeekFrom::End(-(SEEK_TABLE_FOOTER_SIZE as i64)))?;
-        let buf = src.fill_buf()?;
-
+    /// Fails if `buf` does not contain a valid seek table footer.
+    fn from_footer(buf: &[u8]) -> Result<Self> {
         if read_le32!(buf, 5) != SEEKABLE_MAGIC_NUMBER {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown));
         }
-        // Check reserved bits
+
+        // Check reserved bits are not set
         if ((buf[4] >> 2) & 0x1f) > 0 {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected));
         }
 
         let with_checksum = (buf[4] & (1 << 7)) > 0;
-        let num_frames = read_le32!(buf, 0);
+        let num_frames = read_le32!(buf, 0)
+            .try_into()
+            .expect("Number of frames never exceeds u32");
         let size_per_frame: usize = if with_checksum { 12 } else { 8 };
-        let table_size = num_frames * size_per_frame as u32;
+        let table_size = num_frames * size_per_frame;
         let seek_table_size = table_size + SEEK_TABLE_FOOTER_SIZE + SKIPPABLE_HEADER_SIZE;
 
-        src.seek(SeekFrom::End(-(seek_table_size as i64)))?;
-        let mut buf = src.fill_buf()?;
+        Ok(Self {
+            with_checksum,
+            num_frames,
+            size_per_frame,
+            seek_table_size,
+            entries: Entries(vec![]),
+            c_offset: 0,
+            d_offset: 0,
+        })
+    }
 
+    /// Verifies the header of the seek table.
+    ///
+    /// The header consists of the first 8 bytes of a seek table.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `buf` does not start with the skippable magic number (`0x184D2A5E`) or does not
+    /// specify the correct seek table size.
+    fn verify_header(&self, buf: &[u8]) -> Result<()> {
         if read_le32!(buf, 0) != SKIPPABLE_MAGIC_NUMBER {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown));
         }
-        if read_le32!(buf, 4) + SKIPPABLE_HEADER_SIZE != seek_table_size {
+        let size = usize::try_from(read_le32!(buf, 4)).expect("Frame size never exceeds u32");
+        if size + SKIPPABLE_HEADER_SIZE != self.seek_table_size {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown));
         }
 
-        let mut entries = vec![];
-        let mut pos: usize = 8;
-        let mut c_offset = 0;
-        let mut d_offset = 0;
+        Ok(())
+    }
 
-        while (entries.len() as u32) < num_frames {
-            if pos + size_per_frame > buf.len() {
-                src.consume(pos);
-                buf = src.fill_buf()?;
-                pos = 0;
+    /// Call this repetitively to parse the entries of a seek table.
+    ///
+    /// Returns how many bytes were consumed from `buf`. In case of a `0` return value, all
+    /// entries were parsed or the provided buffer is too small.
+    fn parse_entries(&mut self, buf: &[u8]) -> usize {
+        let Self {
+            entries,
+            c_offset,
+            d_offset,
+            ..
+        } = self;
+
+        let mut pos: usize = 0;
+        while entries.0.len() < self.num_frames {
+            if pos + self.size_per_frame > buf.len() {
+                return pos;
             }
 
-            let checksum = if with_checksum {
+            let checksum = if self.with_checksum {
                 Some(read_le32!(buf, pos + 8))
             } else {
                 None
             };
 
             let entry = Entry {
-                c_offset,
-                d_offset,
-                checksum: checksum.unwrap_or(0),
+                c_offset: *c_offset,
+                d_offset: *d_offset,
+                checksum,
             };
-            entries.push(entry);
-            c_offset += read_le32!(buf, pos) as u64;
-            d_offset += read_le32!(buf, pos + 4) as u64;
-            pos += size_per_frame;
+            entries.0.push(entry);
+            // Casting u32 to u64 is fine
+            *c_offset += read_le32!(buf, pos) as u64;
+            *d_offset += read_le32!(buf, pos + 4) as u64;
+            pos += self.size_per_frame;
         }
 
-        // Add a last entry that only has the end of the last frame
-        let entry = Entry {
-            c_offset,
-            d_offset,
-            checksum: 0,
-        };
-        entries.push(entry);
+        if entries.0.len() == self.num_frames {
+            // Add an additional entry that marks the end of the last frame
+            let entry = Entry {
+                c_offset: *c_offset,
+                d_offset: *d_offset,
+                checksum: None,
+            };
+            entries.0.push(entry);
+        }
 
-        let seek_table = SeekTable {
-            entries,
-            with_checksum,
-            num_frames,
-        };
-        Ok(seek_table)
+        pos
+    }
+}
+
+impl From<SeekTableParser> for SeekTable {
+    fn from(value: SeekTableParser) -> Self {
+        SeekTable {
+            entries: value.entries,
+            with_checksum: value.with_checksum,
+            // Frame number always fits in u32
+            num_frames: value.num_frames as u32,
+        }
+    }
+}
+
+/// Holds information of the frames of a seekable archive.
+///
+/// The `SeekTable` allows decompressors to jump directly to the beginning of frames. It is
+/// typically placed in a Zstandard skippable frame at the end of a seekable archive.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use std::fs::File;
+/// # use zeekstd::SeekTable;
+/// let mut seekable = File::open("seekable.zst")?;
+/// let seek_table = SeekTable::from_seekable(&mut seekable)?;
+///
+/// let num_frames = seek_table.num_frames();
+/// # Ok::<(), zeekstd::Error>(())
+/// ```
+#[derive(Debug, Clone)]
+pub struct SeekTable {
+    entries: Entries,
+    with_checksum: bool,
+    num_frames: u32,
+}
+
+impl SeekTable {
+    /// Creates a new `SeekTable` from a seekable archive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the seek table cannot be parsed or validation fails.
+    pub fn from_seekable<S>(src: &mut S) -> Result<Self>
+    where
+        S: Seekable,
+    {
+        let footer = src.seek_table_footer()?;
+        let mut parser = SeekTableParser::from_footer(&footer)?;
+        src.seek_to_seek_table_start(parser.seek_table_size)?;
+        // No need to read the footer again
+        let cap = 8192.min(parser.seek_table_size - SEEK_TABLE_FOOTER_SIZE);
+        let mut buf = vec![0u8; cap];
+        src.read(&mut buf)?;
+        parser.verify_header(&buf[..8])?;
+        buf.drain(..8);
+
+        loop {
+            if parser.parse_entries(&buf) == 0 {
+                break;
+            }
+            if src.read(&mut buf)? == 0 {
+                break;
+            };
+        }
+
+        Ok(parser.into())
     }
 
-    fn frame_index_at_offset(&self, offset: u64, callback: impl Fn(usize) -> u64) -> u32 {
-        if offset >= callback(self.num_frames as usize) {
+    fn frame_index_at_offset(&self, offset: u64, callback: impl Fn(u32) -> u64) -> u32 {
+        // let num_frames: usize = self.num_frames.try_into().expect("frame number fits usize");
+        if offset >= callback(self.num_frames) {
             return self.num_frames;
         }
 
@@ -141,7 +230,7 @@ impl SeekTable {
 
         while low + 1 < high {
             let mid = low.midpoint(high);
-            if callback(mid as usize) <= offset {
+            if callback(mid) <= offset {
                 low = mid;
             } else {
                 high = mid;
@@ -151,34 +240,42 @@ impl SeekTable {
         low
     }
 
-    /// Get the frame index at the given compressed offset.
-    pub fn frame_index_at_compressed_offset(&self, offset: u64) -> u32 {
-        self.frame_index_at_offset(offset, |i| self.entries[i].c_offset)
+    /// Gets the number of frames in the `SeekTable`.
+    pub fn num_frames(&self) -> u32 {
+        self.num_frames
     }
 
-    /// Get the frame index at the given decompressed offset.
-    pub fn frame_index_at_decompressed_offset(&self, offset: u64) -> u32 {
-        self.frame_index_at_offset(offset, |i| self.entries[i].d_offset)
+    /// Whether the frames contain a checksum.
+    pub fn with_checksum(&self) -> bool {
+        self.with_checksum
     }
 
-    /// Get the checksum of the frame at `index`.
+    /// Gets the checksum of the frame at `index`.
     ///
-    /// # Returns
-    ///
-    /// Returns zero if the frame has no checksum.
+    /// Returns `None` if the frame has no checksum.
     ///
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
-    pub fn frame_checksum(&self, index: u32) -> Result<u32> {
+    pub fn frame_checksum(&self, index: u32) -> Result<Option<u32>> {
         if index >= self.num_frames {
             return Err(Error::frame_index_too_large());
         }
 
-        Ok(self.entries[index as usize].checksum)
+        Ok(self.entries[index].checksum)
     }
 
-    /// Get the start position of the frame at `index` in the compressed data.
+    /// Gets the frame index at the given compressed offset.
+    pub fn frame_index_at_compressed_offset(&self, offset: u64) -> u32 {
+        self.frame_index_at_offset(offset, |i| self.entries[i].c_offset)
+    }
+
+    /// Gets the frame index at the given decompressed offset.
+    pub fn frame_index_at_decompressed_offset(&self, offset: u64) -> u32 {
+        self.frame_index_at_offset(offset, |i| self.entries[i].d_offset)
+    }
+
+    /// Gets the start position of the frame at `index` in the compressed data.
     ///
     /// # Errors
     ///
@@ -188,10 +285,10 @@ impl SeekTable {
             return Err(Error::frame_index_too_large());
         }
 
-        Ok(self.entries[index as usize].c_offset)
+        Ok(self.entries[index].c_offset)
     }
 
-    /// Get the start position of the frame at `index` in the decompressed data.
+    /// Gets the start position of the frame at `index` in the decompressed data.
     ///
     /// # Errors
     ///
@@ -201,10 +298,10 @@ impl SeekTable {
             return Err(Error::frame_index_too_large());
         }
 
-        Ok(self.entries[index as usize].d_offset)
+        Ok(self.entries[index].d_offset)
     }
 
-    /// Get the end position of the frame at `index` in the compressed data.
+    /// Gets the end position of the frame at `index` in the compressed data.
     ///
     /// # Errors
     ///
@@ -214,10 +311,10 @@ impl SeekTable {
             return Err(Error::frame_index_too_large());
         }
 
-        Ok(self.entries[index as usize + 1].c_offset)
+        Ok(self.entries[index + 1].c_offset)
     }
 
-    /// Get the end position of the frame at `index` in the decompressed data.
+    /// Gets the end position of the frame at `index` in the decompressed data.
     ///
     /// # Errors
     ///
@@ -227,10 +324,10 @@ impl SeekTable {
             return Err(Error::frame_index_too_large());
         }
 
-        Ok(self.entries[index as usize + 1].d_offset)
+        Ok(self.entries[index + 1].d_offset)
     }
 
-    /// Get the compressed size of the frame at `index`.
+    /// Gets the compressed size of the frame at `index`.
     ///
     /// # Errors
     ///
@@ -240,12 +337,11 @@ impl SeekTable {
             return Err(Error::frame_index_too_large());
         }
 
-        let size =
-            self.entries[index as usize + 1].c_offset - self.entries[index as usize].c_offset;
+        let size = self.entries[index + 1].c_offset - self.entries[index].c_offset;
         Ok(size)
     }
 
-    /// Get the decompressed size of the frame at `index`.
+    /// Gets the decompressed size of the frame at `index`.
     ///
     /// # Errors
     ///
@@ -255,8 +351,7 @@ impl SeekTable {
             return Err(Error::frame_index_too_large());
         }
 
-        let size =
-            self.entries[index as usize + 1].d_offset - self.entries[index as usize].d_offset;
+        let size = self.entries[index + 1].d_offset - self.entries[index].d_offset;
         Ok(size)
     }
 }
