@@ -15,7 +15,7 @@ name = "zeekstd"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0.97"
-clap = { version = "4.5.32", features = ["derive"] }
+anyhow = "1.0.98"
+clap = { version = "4.5.36", features = ["derive"] }
 indicatif = "0.17.11"
 zstd-safe = { version = "7.2.4", features = ["std", "seekable"] }
