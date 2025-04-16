@@ -215,9 +215,9 @@ mod tests {
             fl.log_frame(i, i, Some(i)).unwrap();
         }
 
-        let mut out1 = vec![0;1024];
-        let mut out2 = vec![0;1024];
-        let mut out3 = std::io::Cursor::new(vec![0;1024]);
+        let mut out1 = vec![0; 1024];
+        let mut out2 = vec![0; 1024];
+        let mut out3 = std::io::Cursor::new(vec![0; 1024]);
 
         fl.write_seek_table_into(&mut out1).unwrap();
         assert!(fl.is_writing());

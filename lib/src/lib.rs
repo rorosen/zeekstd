@@ -66,8 +66,8 @@ mod frame_log;
 mod seek_table;
 mod seekable;
 
-pub use compress::{CompressOptions, Compressor, FrameSizePolicy, Encoder};
-pub use decompress::{DecompressOptions, Decompressor, Decoder};
+pub use compress::{CompressOptions, Compressor, Encoder, FrameSizePolicy};
+pub use decompress::{Decoder, DecompressOptions, Decompressor};
 pub use error::{Error, Result};
 pub use frame_log::FrameLog;
 pub use seek_table::SeekTable;
