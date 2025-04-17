@@ -158,6 +158,7 @@ where
             out_buf: vec![0; CCtx::out_size()],
             out_buf_pos: 0,
             writer,
+            written_compressed: 0,
         })
     }
 }
@@ -226,7 +227,7 @@ where
             )?;
         }
 
-        // Casting should always be fine
+        // Casting these is always fine
         self.frame_c_size += out_buf.pos() as u32;
         self.frame_d_size += in_buf.pos() as u32;
         if let Some(xxh) = &mut self.xxh64 {
@@ -235,17 +236,24 @@ where
 
         let mut out_progress = out_buf.pos();
         if self.is_frame_complete() {
-            out_progress += self.end_frame(&mut output[out_progress..])?;
+            while out_progress < output.len() {
+                let (out_prog, n) = self.end_frame(&mut output[out_progress..])?;
+                out_progress += out_prog;
+                if n == 0 {
+                    break;
+                }
+            }
         }
 
         Ok((in_buf.pos(), out_progress))
     }
 
-    /// End the current frame and start a new one.
+    /// Ends the current frame.
     ///
-    /// Call this repetitively to write bytes into `output`. Returns the number of bytes written.
-    /// Should be called until `Ok(0)` is returned.
-    pub fn end_frame(&mut self, output: &mut [u8]) -> Result<usize> {
+    /// Call this repetitively to write the frame epilogue to `output`. Returns two numbers,
+    /// `(o, n)` where `o` is the number of bytes written to `output`, and `n` is a minimal
+    /// estimation of the bytes left to flush. Should be called until `n` is zero.
+    pub fn end_frame(&mut self, output: &mut [u8]) -> Result<(usize, usize)> {
         let mut empty_buf = InBuffer::around(&[]);
         let mut out_buf = OutBuffer::around(output);
 
@@ -260,7 +268,7 @@ where
             // Casting should always be fine
             self.frame_c_size += (out_buf.pos() - prev_out_pos) as u32;
             if out_buf.pos() == out_buf.capacity() {
-                return Ok(out_buf.pos());
+                return Ok((out_buf.pos(), n));
             }
 
             if n == 0 {
@@ -277,26 +285,18 @@ where
             .log_frame(self.frame_c_size, self.frame_d_size, checksum)?;
         self.reset_frame()?;
 
-        Ok(out_buf.pos())
+        // If we get here the frame is complete
+        Ok((out_buf.pos(), 0))
     }
 
-    /// Ends the current frame and writes the seek table.
+    /// Writes the seek table to `output`.
     ///
-    /// Call this repetitively to write the seek table into `output`. Returns the number of bytes
-    /// written. Should be called until `Ok(0)` is returned.
-    pub fn finish(&mut self, output: &mut [u8]) -> Result<usize> {
-        let mut written = if self.frame_log.is_writing() {
-            0
-        } else {
-            // Drop the prefix so it doesn't get set again.
-            let _ = self.prefix.take();
-            self.end_frame(output)?
-        };
-
+    /// Call this repetitively to write the seek table to `output`. Returns the number of bytes
+    /// written. Should be called until `0` is returned.
+    pub fn write_seek_table_into(&mut self, output: &mut [u8]) -> usize {
+        let mut written = 0;
         while written < output.capacity() {
-            let n = self
-                .frame_log
-                .write_seek_table_into(&mut output[written..])?;
+            let n = self.frame_log.write_seek_table_into(&mut output[written..]);
 
             if n == 0 {
                 break;
@@ -304,13 +304,36 @@ where
             written += n;
         }
 
-        Ok(written)
+        written
+    }
+
+    /// Removes the referenced prefix, if any.
+    ///
+    /// Removes and returns the referenced prefix. Call this to improve compression speed, if a
+    /// previously referenced prefix isn't needed anymore.
+    pub fn remove_prefix(&mut self) -> Option<&'p [u8]> {
+        self.prefix.take()
+    }
+
+    /// Sets a new prefix that gets referenced for every frame.
+    ///
+    /// Decompression will need same prefix to properly regenerate data. Referencing a prefix
+    /// involves building tables, which are dependent on compression parameters. It's a CPU
+    /// consuming operation, with non-negligible impact on latency, this shouldn't be used for
+    /// small frame sizes. Setting a prefix resets any frame prefix and invalidates any previous
+    /// prefix.
+    pub fn set_prefix(&mut self, prefix: &'p [u8]) -> Result<()> {
+        self.remove_prefix();
+        self.reset_frame()?;
+        self.prefix = Some(prefix);
+
+        Ok(())
     }
 
     /// Resets the current frame.
     ///
     /// This will discard any compression progress tracked for the current frame and resets
-    /// the compression context.
+    /// the compression session.
     pub fn reset_frame(&mut self) -> Result<()> {
         self.frame_c_size = 0;
         self.frame_d_size = 0;
@@ -340,6 +363,7 @@ where
             out_buf: vec![0; CCtx::out_size()],
             out_buf_pos: 0,
             writer,
+            written_compressed: 0,
         })
     }
 }
@@ -352,6 +376,7 @@ pub struct Encoder<'c, 'p, W> {
     out_buf: Vec<u8>,
     out_buf_pos: usize,
     writer: W,
+    written_compressed: u64,
 }
 
 impl<W> Encoder<'_, '_, W> {
@@ -371,73 +396,94 @@ where
     ///
     /// Call this repetitively to consume data. Returns the number of bytes consumed from `buf`.
     pub fn encode(&mut self, buf: &[u8]) -> Result<usize> {
-        let mut written = 0;
+        let mut input_progress = 0;
 
-        while written < buf.len() {
-            let (inp_prog, out_prog) = self
-                .comp
-                .compress(&buf[written..], &mut self.out_buf[self.out_buf_pos..])?;
+        while input_progress < buf.len() {
+            let (inp_prog, out_prog) = self.comp.compress(
+                &buf[input_progress..],
+                &mut self.out_buf[self.out_buf_pos..],
+            )?;
 
             if inp_prog == 0 && out_prog == 0 {
                 break;
             }
 
             self.out_buf_pos += out_prog;
-            if self.out_buf_pos == self.out_buf.len() {
-                self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
-                self.out_buf_pos = 0;
-            }
-
-            written += inp_prog;
+            self.flush_out_buf()?;
+            input_progress += inp_prog;
         }
 
-        Ok(written)
+        Ok(input_progress)
     }
 
     /// Ends the current frame.
     ///
-    /// Call this repetitively to write data to the internal writer. Returns the number of bytes
-    /// written. Should be called until `Ok(0)` is returned.
+    /// Call this to write data to the internal writer. Returns the number of bytes written.
     pub fn end_frame(&mut self) -> Result<usize> {
-        let mut written = 0;
+        let mut progress = 0;
 
         loop {
-            let n = self.comp.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
-            if n == 0 {
-                return Ok(written);
-            }
+            let (prog, n) = self.comp.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
+            self.out_buf_pos += prog;
+            self.flush_out_buf()?;
+            progress += prog;
 
-            self.out_buf_pos += n;
-            if self.out_buf_pos == self.out_buf.len() {
-                self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
-                self.out_buf_pos = 0;
+            if n == 0 {
+                return Ok(progress);
             }
-            written += n;
         }
     }
 
     /// Ends the current frame and writes the seek table.
     ///
-    /// Call this repetitively to write the seek table to the internal writer. Returns the number
-    /// of bytes written. Should be called until `Ok(0)` is returned.
-    pub fn finish(&mut self) -> Result<usize> {
-        let mut written = 0;
+    /// Call this to write the seek table to the internal writer. Returns the total number of
+    /// compressed bytes written by this `Encoder`.
+    pub fn finish(mut self) -> Result<u64> {
+        let mut progress = 0;
+        self.comp.remove_prefix();
 
         loop {
-            let n = self.comp.finish(&mut self.out_buf[self.out_buf_pos..])?;
+            let (prog, n) = self.comp.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
+            self.out_buf_pos += prog;
+            self.flush_out_buf()?;
+            progress += prog;
+
+            if n == 0 {
+                break;
+            }
+        }
+
+        loop {
+            let n = self
+                .comp
+                .write_seek_table_into(&mut self.out_buf[self.out_buf_pos..]);
             if n == 0 {
                 self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
                 self.writer.flush()?;
-                return Ok(written);
+                return Ok(self.written_compressed + progress as u64);
             }
 
             self.out_buf_pos += n;
-            if self.out_buf_pos == self.out_buf.len() {
-                self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
-                self.out_buf_pos = 0;
-            }
-            written += n;
+            self.flush_out_buf()?;
+            progress += n;
         }
+    }
+
+    /// Get the total number of compressed bytes written to the internal writer so far.
+    pub fn written_compressed(&self) -> u64 {
+        self.written_compressed
+    }
+
+    /// Flushes `self.out_buf`, if it is full with new data
+    #[inline]
+    fn flush_out_buf(&mut self) -> Result<()> {
+        if self.out_buf_pos == self.out_buf.len() {
+            self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
+            self.written_compressed += self.out_buf_pos as u64;
+            self.out_buf_pos = 0;
+        }
+
+        Ok(())
     }
 }
 

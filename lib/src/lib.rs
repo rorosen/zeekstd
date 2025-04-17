@@ -32,7 +32,7 @@
 //! Streaming decompression can be achieved using the [`Decoder`] struct.
 //!
 //! ```no_run
-//! use std::{fs::File, io::{self, BufReader}};
+//! use std::{fs::File, io};
 //! use zeekstd::Decoder;
 //!
 //! let input = File::open("seekable.zst")?;
@@ -45,7 +45,7 @@
 //! Or decompress only specific frames.
 //!
 //! ```no_run
-//! # use std::{fs::File, io::{self, BufReader}};
+//! # use std::{fs::File, io};
 //! # use zeekstd::Decoder;
 //! # let seekable = File::open("seekable.zst")?;
 //! # let mut decoder = Decoder::from_seekable(seekable)?;
@@ -94,7 +94,7 @@ pub struct ReadmeDoctests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{self, BufRead, BufReader, Cursor, Write};
+    use std::io::{self, BufRead, Cursor, Write};
 
     use zstd_safe::{CCtx, CParameter};
 
@@ -136,25 +136,25 @@ mod tests {
 
     #[test]
     fn seek_table_from_frame_log() -> Result<()> {
+        const NUM_FRAMES: u32 = 4096;
         let mut fl = FrameLog::new(true);
 
-        for i in 1..=1024 {
+        for i in 1..=NUM_FRAMES {
             fl.log_frame(i * 5, i * 10, Some(i))?;
         }
 
-        let mut cursor = Cursor::new(Vec::with_capacity(
+        let mut seek_table = Cursor::new(Vec::with_capacity(
             // The size of the seek table
-            12 * 1024 + SKIPPABLE_HEADER_SIZE + SEEK_TABLE_FOOTER_SIZE,
+            12 * NUM_FRAMES as usize + SKIPPABLE_HEADER_SIZE + SEEK_TABLE_FOOTER_SIZE,
         ));
-        io::copy(&mut fl, &mut cursor)?;
+        io::copy(&mut fl, &mut seek_table)?;
 
-        let mut src = BufReader::new(cursor);
-        let st = SeekTable::from_seekable(&mut src)?;
-        assert_eq!(st.num_frames(), 1024);
+        let st = SeekTable::from_seekable(&mut seek_table)?;
+        assert_eq!(st.num_frames(), NUM_FRAMES);
 
         let mut c_offset = 0;
         let mut d_offset = 0;
-        for i in 1..=1024 {
+        for i in 1..=NUM_FRAMES {
             assert_eq!(st.frame_checksum(i - 1)?, Some(i));
             assert_eq!(st.frame_compressed_end(i - 1)?, c_offset + i as u64 * 5);
             assert_eq!(st.frame_compressed_size(i - 1)?, i as u64 * 5);
@@ -176,6 +176,9 @@ mod tests {
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = Encoder::new(&mut seekable)?;
+        // let mut encoder = CompressOptions::new()
+        //     .frame_size_policy(FrameSizePolicy::Decompressed(512))
+        //     .into_encoder(&mut seekable)?;
 
         // Compress the input
         io::copy(&mut input, &mut encoder)?;
@@ -315,7 +318,7 @@ mod tests {
 
         let mut decoder = DecompressOptions::new()
             .prefix(old.get_ref())
-            .into_decoder(BufReader::new(patch))?;
+            .into_decoder(patch)?;
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
         io::copy(&mut decoder, &mut output)?;
         output.set_position(0);

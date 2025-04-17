@@ -4,17 +4,25 @@ use crate::{
     error::{Error, Result},
 };
 
+// Writes a 32 bit value in little endian to buf
 macro_rules! write_le32 {
-    ($buf:expr, $write_pos:expr, $offset:expr, $value:expr, $pos:expr) => {
+    ($buf:expr, $buf_pos:expr, $write_pos:expr, $value:expr, $offset:expr) => {
         // Only write if this hasn't been written before
-        if $write_pos < $pos + 4 {
-            // Check if the buffer has space left
-            if $offset + 4 > $buf.len() {
-                return Ok($offset);
+        if $write_pos < $offset + 4 {
+            // Minimum of remaining buffer space and number of bytes we want to write
+            let len = usize::min($buf.len() - $buf_pos, $offset + 4 - $write_pos);
+            // The value offset, > 0 if we wrote the value partially in a previous run (because of
+            // little buffer space remaining)
+            let val_offset = $write_pos - $offset;
+            // Copy the importnat parts of value to buf
+            $buf[$buf_pos..$buf_pos + len]
+                .copy_from_slice(&$value.to_le_bytes()[val_offset..val_offset + len]);
+            $buf_pos += len;
+            $write_pos += len;
+            // Return if the buffer is full
+            if $buf_pos == $buf.len() {
+                return $buf_pos;
             }
-            $buf[$offset..$offset + 4].copy_from_slice(&$value.to_le_bytes());
-            $offset += 4;
-            $write_pos += 4;
         }
     };
 }
@@ -33,10 +41,10 @@ struct Frame {
 ///
 /// // Create a FrameLog that requires checksums
 /// let mut fl = FrameLog::new(true);
-/// let mut seek_table = [0; 128];
+/// let mut buffer = [0; 128];
 ///
 /// fl.log_frame(123, 456, Some(789))?;
-/// fl.write_seek_table_into(&mut seek_table)?;
+/// fl.write_seek_table_into(&mut buffer);
 /// # Ok::<(), zeekstd::Error>(())
 /// ```
 #[derive(Debug, Clone)]
@@ -106,34 +114,25 @@ impl FrameLog {
     /// Call this repetitively to fill `buf` with bytes. A nonzero return value indicates that
     /// `buf` has been filled with `n` bytes. Writing the seek table is complete when `Ok(0)` is
     /// returned.
-    ///
-    /// # Errors
-    ///
-    /// Fails if `buf` is too small to make progress.
-    pub fn write_seek_table_into(&mut self, buf: &mut [u8]) -> Result<usize> {
-        // Cannot make progress with a buffer that small
-        if buf.len() < 4 {
-            return Err(Error::buffer_too_small());
-        }
-
+    pub fn write_seek_table_into(&mut self, buf: &mut [u8]) -> usize {
         let size_per_frame: usize = if self.with_checksum { 12 } else { 8 };
-        let mut offset = 0;
+        let mut buf_pos = 0;
 
         // The total size of the seek table frame, not including the SKIPPABLE_MAGIC_NUMBER and
         // seek_table_size. Should always fit in u32.
         let seek_table_size = (size_per_frame * self.frames.len() + SEEK_TABLE_FOOTER_SIZE) as u32;
         // Serialize header
-        write_le32!(buf, self.write_pos, offset, SKIPPABLE_MAGIC_NUMBER, 0);
-        write_le32!(buf, self.write_pos, offset, seek_table_size, 4);
+        write_le32!(buf, buf_pos, self.write_pos, SKIPPABLE_MAGIC_NUMBER, 0);
+        write_le32!(buf, buf_pos, self.write_pos, seek_table_size, 4);
 
         // Serialize frames
         while self.frame_index < self.frames.len() {
             let frame = &self.frames[self.frame_index];
-            let pos = SKIPPABLE_HEADER_SIZE + size_per_frame * self.frame_index;
-            write_le32!(buf, self.write_pos, offset, frame.c_size, pos);
-            write_le32!(buf, self.write_pos, offset, frame.d_size, pos + 4);
+            let offset = SKIPPABLE_HEADER_SIZE + size_per_frame * self.frame_index;
+            write_le32!(buf, buf_pos, self.write_pos, frame.c_size, offset);
+            write_le32!(buf, buf_pos, self.write_pos, frame.d_size, offset + 4);
             if self.with_checksum {
-                write_le32!(buf, self.write_pos, offset, frame.checksum, pos + 8);
+                write_le32!(buf, buf_pos, self.write_pos, frame.checksum, offset + 8);
             }
             self.frame_index += 1;
         }
@@ -142,25 +141,25 @@ impl FrameLog {
         let pos = SKIPPABLE_HEADER_SIZE + size_per_frame * self.frames.len();
         write_le32!(
             buf,
+            buf_pos,
             self.write_pos,
-            offset,
             // Always fit in u32 because cannot be greater than SEEKABLE_MAX_FRAMES
             self.frames.len() as u32,
             pos
         );
         let descriptor: u8 = if self.with_checksum { 1 << 7 } else { 0 };
         if self.write_pos < pos + 5 {
-            buf[offset] = descriptor;
-            offset += 1;
+            buf[buf_pos] = descriptor;
+            buf_pos += 1;
             self.write_pos += 1;
         }
-        write_le32!(buf, self.write_pos, offset, SEEKABLE_MAGIC_NUMBER, pos + 5);
+        write_le32!(buf, buf_pos, self.write_pos, SEEKABLE_MAGIC_NUMBER, pos + 5);
 
-        Ok(offset)
+        buf_pos
     }
 
     /// Whether the seek table gets currently written.
-    pub fn is_writing(&self) -> bool {
+    pub fn is_writing_seek_table(&self) -> bool {
         self.write_pos != 0
     }
 
@@ -176,8 +175,7 @@ impl FrameLog {
 
 impl std::io::Read for FrameLog {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.write_seek_table_into(buf)
-            .map_err(std::io::Error::other)
+        Ok(self.write_seek_table_into(buf))
     }
 }
 
@@ -219,11 +217,11 @@ mod tests {
         let mut out2 = vec![0; 1024];
         let mut out3 = std::io::Cursor::new(vec![0; 1024]);
 
-        fl.write_seek_table_into(&mut out1).unwrap();
-        assert!(fl.is_writing());
+        fl.write_seek_table_into(&mut out1);
+        assert!(fl.is_writing_seek_table());
         fl.reset_write_pos();
-        assert!(!fl.is_writing());
-        fl.write_seek_table_into(&mut out2).unwrap();
+        assert!(!fl.is_writing_seek_table());
+        fl.write_seek_table_into(&mut out2);
         fl.reset_write_pos();
         std::io::copy(&mut fl, &mut out3).unwrap();
 

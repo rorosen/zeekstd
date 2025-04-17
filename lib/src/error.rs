@@ -32,17 +32,6 @@ impl Error {
         matches!(self.kind, Kind::WriteInProgress)
     }
 
-    pub(crate) fn buffer_too_small() -> Self {
-        Self {
-            kind: Kind::BufferTooSmall,
-        }
-    }
-
-    /// Returns true if the error is related to a buffer that is too small to make progress.
-    pub fn is_buffer_too_small(&self) -> bool {
-        matches!(self.kind, Kind::BufferTooSmall)
-    }
-
     pub(crate) fn missing_checksum() -> Self {
         Self {
             kind: Kind::MissingChecksum,
@@ -107,7 +96,6 @@ impl core::fmt::Display for Error {
             Kind::NumberConversionFailed(err) => write!(f, "number conversion failed: {err}"),
             Kind::OffsetOutOfRange => f.write_str("offset out of range"),
             Kind::WriteInProgress => f.write_str("not supported when writing"),
-            Kind::BufferTooSmall => f.write_str("buffer too small to make progress"),
             Kind::FrameIndexTooLarge => f.write_str("frame index too large"),
             Kind::FrameSizeTooLarge => f.write_str("frame size too large"),
             Kind::IO(err) => write!(f, "io error: {err}"),
@@ -151,8 +139,6 @@ enum Kind {
     OffsetOutOfRange,
     /// Action not supported when writing.
     WriteInProgress,
-    /// Buffer too small to make progress.
-    BufferTooSmall,
     /// The passed frame index is too large.
     FrameIndexTooLarge,
     /// The desired frame size is too large.
@@ -175,7 +161,6 @@ impl core::fmt::Debug for Kind {
             }
             Self::OffsetOutOfRange => write!(f, "OffsetOutOfRange"),
             Self::WriteInProgress => write!(f, "SerializeInProgress"),
-            Self::BufferTooSmall => write!(f, "BufferTooSmall"),
             Self::FrameIndexTooLarge => write!(f, "FrameIndexTooLarge"),
             Self::FrameSizeTooLarge => write!(f, "FrameSizeTooLarge"),
             Self::IO(arg0) => f.debug_tuple("IO").field(arg0).finish(),
