@@ -11,12 +11,12 @@ use crate::{
 
 /// Options that configure how data is decompressed.
 #[derive(Default)]
-pub struct DecompressOptions<'d, 'p> {
+pub struct DecodeOptions<'d, 'p> {
     dctx: Option<DCtx<'d>>,
     prefix: Option<&'p [u8]>,
 }
 
-impl<'d, 'p> DecompressOptions<'d, 'p> {
+impl<'d, 'p> DecodeOptions<'d, 'p> {
     /// Creates a set of options with default initial values.
     pub fn new() -> Self {
         Self::default()
@@ -38,12 +38,12 @@ impl<'d, 'p> DecompressOptions<'d, 'p> {
         self
     }
 
-    /// Creates a [`Decompressor`] with the configuration.
+    /// Creates a [`RawDecoder`] with the configuration.
     ///
     /// # Errors
     ///
     /// Fails if zstd returns an error.
-    pub fn into_decompressor(self, with_checksum: bool) -> Result<Decompressor<'d, 'p>>
+    pub fn into_raw_decoder(self, with_checksum: bool) -> Result<RawDecoder<'d, 'p>>
     where
         'p: 'd,
     {
@@ -58,7 +58,7 @@ impl<'d, 'p> DecompressOptions<'d, 'p> {
         }
         let xxh64 = with_checksum.then(|| Xxh64::new(0));
 
-        Ok(Decompressor {
+        Ok(RawDecoder {
             dctx,
             prefix: self.prefix,
             xxh64,
@@ -75,7 +75,7 @@ impl<'d, 'p> DecompressOptions<'d, 'p> {
         'p: 'd,
     {
         let seek_table = SeekTable::from_seekable(&mut src)?;
-        let decomp = self.into_decompressor(seek_table.with_checksum())?;
+        let decomp = self.into_raw_decoder(seek_table.with_checksum())?;
         let upper_frame = seek_table.num_frames() - 1;
 
         Ok(Decoder {
@@ -95,20 +95,20 @@ impl<'d, 'p> DecompressOptions<'d, 'p> {
 /// A seekable decompressor.
 ///
 /// Performs low level in-memory seekable decompression for streams of data.
-pub struct Decompressor<'d, 'p> {
+pub struct RawDecoder<'d, 'p> {
     dctx: DCtx<'d>,
     prefix: Option<&'p [u8]>,
     xxh64: Option<Xxh64>,
 }
 
-impl Decompressor<'_, '_> {
+impl RawDecoder<'_, '_> {
     /// Create a new `Decompressor` with default parameters.
     pub fn new(with_checksum: bool) -> Result<Self> {
-        DecompressOptions::new().into_decompressor(with_checksum)
+        DecodeOptions::new().into_raw_decoder(with_checksum)
     }
 }
 
-impl<'d, 'p> Decompressor<'d, 'p>
+impl<'d, 'p> RawDecoder<'d, 'p>
 where
     'p: 'd,
 {
@@ -177,7 +177,7 @@ where
 
 /// Decompresses data from a seekable source.
 pub struct Decoder<'p, 'd, S> {
-    decomp: Decompressor<'d, 'p>,
+    decomp: RawDecoder<'d, 'p>,
     seek_table: SeekTable,
     src: S,
     src_pos: u64,
@@ -191,7 +191,7 @@ pub struct Decoder<'p, 'd, S> {
 impl<S: Seekable> Decoder<'_, '_, S> {
     /// Creates a new `Decoder` with default parameters and `src` as source.
     pub fn from_seekable(src: S) -> Result<Self> {
-        DecompressOptions::new().into_decoder(src)
+        DecodeOptions::new().into_decoder(src)
     }
 
     /// Creates a new `Decoder` with default parameters and a slice as source.
@@ -199,7 +199,7 @@ impl<S: Seekable> Decoder<'_, '_, S> {
     /// The slice needs to hold the complete seekable data, including the seek table.
     pub fn from_bytes(src: &[u8]) -> Result<Decoder<'_, '_, BytesWrapper<'_>>> {
         let wrapper = BytesWrapper::new(src);
-        DecompressOptions::new().into_decoder(wrapper)
+        DecodeOptions::new().into_decoder(wrapper)
     }
 }
 
@@ -234,6 +234,8 @@ where
             let (inp_prog, out_prog) = self.decomp.decompress(
                 &self.in_buf[self.in_buf_pos..self.in_buf_limit],
                 &mut buf[output_progress..],
+                // This gets only called if the seek table has checksums, we can expect every frame
+                // to have a checksum inside the callback.
                 |offset: usize, checksum: u32| {
                     let index = self
                         .seek_table

@@ -45,22 +45,22 @@ impl FrameSizePolicy {
 /// create frame checksums.
 ///
 /// ```
-/// use zeekstd::{CompressOptions, FrameSizePolicy};
+/// use zeekstd::{EncodeOptions, FrameSizePolicy};
 ///
-/// let compressor = CompressOptions::new()
+/// let compressor = EncodeOptions::new()
 ///     .frame_size_policy(FrameSizePolicy::Decompressed(8192))
 ///     .with_checksum(false)
-///     .into_compressor()?;
+///     .into_raw_encoder()?;
 /// # Ok::<(), zeekstd::Error>(())
 /// ```
-pub struct CompressOptions<'c, 'p> {
+pub struct EncodeOptions<'c, 'p> {
     cctx: Option<CCtx<'c>>,
     frame_policy: FrameSizePolicy,
     with_checksum: bool,
     prefix: Option<&'p [u8]>,
 }
 
-impl Default for CompressOptions<'_, '_> {
+impl Default for EncodeOptions<'_, '_> {
     fn default() -> Self {
         Self {
             cctx: None,
@@ -71,7 +71,7 @@ impl Default for CompressOptions<'_, '_> {
     }
 }
 
-impl<'c, 'p> CompressOptions<'c, 'p>
+impl<'c, 'p> EncodeOptions<'c, 'p>
 where
     'p: 'c,
 {
@@ -113,12 +113,12 @@ where
         self
     }
 
-    /// Creates a [`Compressor`] with the configuration.
+    /// Creates a [`RawEncoder`] with the configuration.
     ///
     /// # Errors
     ///
     /// Fails if zstd returns an error.
-    pub fn into_compressor(self) -> Result<Compressor<'c, 'p>> {
+    pub fn into_raw_encoder(self) -> Result<RawEncoder<'c, 'p>> {
         // SEEKABLE_MAX_FRAME_SIZE always fits in u32
         if self.frame_policy.size() > SEEKABLE_MAX_FRAME_SIZE as u32 {
             return Err(Error::frame_size_too_large());
@@ -134,7 +134,7 @@ where
             cctx.ref_prefix(prefix)?;
         }
 
-        Ok(Compressor {
+        Ok(RawEncoder {
             cctx,
             frame_policy: self.frame_policy,
             frame_c_size: 0,
@@ -151,7 +151,7 @@ where
     ///
     /// Fails if zstd returns an error.
     pub fn into_encoder<W>(self, writer: W) -> Result<Encoder<'c, 'p, W>> {
-        let comp = self.into_compressor()?;
+        let comp = self.into_raw_encoder()?;
 
         Ok(Encoder {
             comp,
@@ -166,7 +166,7 @@ where
 /// A seekable compressor.
 ///
 /// Performs low level in-memory seekable compression for streams of data.
-pub struct Compressor<'c, 'p> {
+pub struct RawEncoder<'c, 'p> {
     cctx: CCtx<'c>,
     frame_policy: FrameSizePolicy,
     frame_c_size: u32,
@@ -176,10 +176,10 @@ pub struct Compressor<'c, 'p> {
     xxh64: Option<Xxh64>,
 }
 
-impl Compressor<'_, '_> {
+impl RawEncoder<'_, '_> {
     /// Creates a new `Compressor` with default parameters.
     pub fn new() -> Result<Self> {
-        CompressOptions::new().into_compressor()
+        EncodeOptions::new().into_raw_encoder()
     }
 
     fn remaining_frame_space(&self) -> usize {
@@ -189,7 +189,7 @@ impl Compressor<'_, '_> {
             FrameSizePolicy::Decompressed(limit) => limit - self.frame_d_size,
         };
 
-        n.try_into().expect("remaining frame space fits in usize")
+        n.try_into().expect("Remaining frame space fits in usize")
     }
 
     fn is_frame_complete(&self) -> bool {
@@ -203,7 +203,7 @@ impl Compressor<'_, '_> {
     }
 }
 
-impl<'c, 'p> Compressor<'c, 'p>
+impl<'c, 'p> RawEncoder<'c, 'p>
 where
     'p: 'c,
 {
@@ -372,7 +372,7 @@ where
 ///
 /// The compressed data gets written to an internal writer.
 pub struct Encoder<'c, 'p, W> {
-    comp: Compressor<'c, 'p>,
+    comp: RawEncoder<'c, 'p>,
     out_buf: Vec<u8>,
     out_buf_pos: usize,
     writer: W,
@@ -384,7 +384,7 @@ impl<W> Encoder<'_, '_, W> {
     ///
     /// Compressed data gets written to `writer`.
     pub fn new(writer: W) -> Result<Self> {
-        CompressOptions::default().into_encoder(writer)
+        EncodeOptions::default().into_encoder(writer)
     }
 }
 

@@ -59,18 +59,19 @@
 //! [zstd_specification]: https://github.com/facebook/zstd/blob/dev/contrib/seekable_format/zstd_seekable_compression_format.md
 //! [zstd_safe]: https://docs.rs/zstd-safe/latest/zstd_safe/
 
-mod compress;
-mod decompress;
+mod decode;
+mod encode;
 mod error;
 mod frame_log;
 mod seek_table;
 mod seekable;
 
-pub use compress::{CompressOptions, Compressor, Encoder, FrameSizePolicy};
-pub use decompress::{Decoder, DecompressOptions, Decompressor};
+pub use decode::{DecodeOptions, Decoder, RawDecoder};
+pub use encode::{EncodeOptions, RawEncoder, Encoder, FrameSizePolicy};
 pub use error::{Error, Result};
 pub use frame_log::FrameLog;
 pub use seek_table::SeekTable;
+pub use seekable::Seekable;
 // Re-export as it's part of the API.
 pub use zstd_safe::CompressionLevel;
 
@@ -99,8 +100,8 @@ mod tests {
     use zstd_safe::{CCtx, CParameter};
 
     use crate::{
-        compress::{CompressOptions, Encoder, FrameSizePolicy},
-        decompress::{Decoder, DecompressOptions},
+        decode::{DecodeOptions, Decoder},
+        encode::{EncodeOptions, Encoder, FrameSizePolicy},
         error::Result,
         frame_log::FrameLog,
         seek_table::SeekTable,
@@ -184,7 +185,7 @@ mod tests {
         io::copy(&mut input, &mut encoder)?;
         encoder.finish()?;
 
-        let mut decoder = DecompressOptions::new().into_decoder(seekable)?;
+        let mut decoder = DecodeOptions::new().into_decoder(seekable)?;
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
         // Decompress the complete seekable
         io::copy(&mut decoder, &mut output)?;
@@ -207,7 +208,7 @@ mod tests {
 
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
-        let mut encoder = CompressOptions::new()
+        let mut encoder = EncodeOptions::new()
             .frame_size_policy(FrameSizePolicy::Decompressed(LINE_LEN * LINES_IN_FRAME))
             .into_encoder(&mut seekable)
             .unwrap();
@@ -307,7 +308,7 @@ mod tests {
         let mut cctx = CCtx::create();
         cctx.set_parameter(CParameter::WindowLog(window_log))?;
         cctx.set_parameter(CParameter::EnableLongDistanceMatching(true))?;
-        let mut encoder = CompressOptions::new()
+        let mut encoder = EncodeOptions::new()
             .cctx(cctx)
             .prefix(old.get_ref())
             .into_encoder(&mut patch)?;
@@ -316,7 +317,7 @@ mod tests {
         io::copy(&mut new, &mut encoder)?;
         encoder.finish()?;
 
-        let mut decoder = DecompressOptions::new()
+        let mut decoder = DecodeOptions::new()
             .prefix(old.get_ref())
             .into_decoder(patch)?;
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
