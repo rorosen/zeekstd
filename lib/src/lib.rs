@@ -67,7 +67,7 @@ mod seek_table;
 mod seekable;
 
 pub use decode::{DecodeOptions, Decoder, RawDecoder};
-pub use encode::{EncodeOptions, RawEncoder, Encoder, FrameSizePolicy};
+pub use encode::{EncodeOptions, Encoder, FrameSizePolicy, RawEncoder};
 pub use error::{Error, Result};
 pub use frame_log::FrameLog;
 pub use seek_table::SeekTable;
@@ -157,14 +157,14 @@ mod tests {
         let mut d_offset = 0;
         for i in 1..=NUM_FRAMES {
             assert_eq!(st.frame_checksum(i - 1)?, Some(i));
-            assert_eq!(st.frame_compressed_end(i - 1)?, c_offset + i as u64 * 5);
-            assert_eq!(st.frame_compressed_size(i - 1)?, i as u64 * 5);
-            assert_eq!(st.frame_compressed_start(i - 1)?, c_offset);
-            assert_eq!(st.frame_decompressed_end(i - 1)?, d_offset + i as u64 * 10);
-            assert_eq!(st.frame_decompressed_size(i - 1)?, i as u64 * 10);
-            assert_eq!(st.frame_decompressed_start(i - 1)?, d_offset);
-            assert_eq!(st.frame_index_at_compressed_offset(c_offset), i - 1);
-            assert_eq!(st.frame_index_at_decompressed_offset(d_offset), i - 1);
+            assert_eq!(st.frame_end_comp(i - 1)?, c_offset + i as u64 * 5);
+            assert_eq!(st.frame_size_comp(i - 1)?, i as u64 * 5);
+            assert_eq!(st.frame_start_comp(i - 1)?, c_offset);
+            assert_eq!(st.frame_end_decomp(i - 1)?, d_offset + i as u64 * 10);
+            assert_eq!(st.frame_size_decomp(i - 1)?, i as u64 * 10);
+            assert_eq!(st.frame_start_decomp(i - 1)?, d_offset);
+            assert_eq!(st.frame_index_comp(c_offset), i - 1);
+            assert_eq!(st.frame_index_decomp(d_offset), i - 1);
             c_offset += i as u64 * 5;
             d_offset += i as u64 * 10;
         }

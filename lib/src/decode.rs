@@ -119,6 +119,12 @@ where
     /// `o` is the output progress, i.e. the number of bytes written to `output`. The caller
     /// must check if `input` has been entirely consumed. If not, the caller must make some room
     /// to receive more decompressed data, and then present again remaining input data.
+    ///
+    /// `validate_checksum` gets called on every frame end with two parameters, `pos` and
+    /// `checksum`, where `pos` is the current position in the input buffer and `checksum` are the
+    /// least 32 bit of the XXH64 hash of the decompressed frame data. An `Ok(())` result of
+    /// `validate_checksum` indicates that `checksum` was verified successfully, any other return
+    /// value will result in a failed decompression immediately.
     pub fn decompress<F>(
         &mut self,
         input: &[u8],
@@ -212,9 +218,9 @@ where
     ///
     /// Call this repetitively to decompress data. Returns the number of bytes written to `buf`.
     pub fn decode(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let end_pos = self.seek_table.frame_compressed_end(self.upper_frame)?;
+        let end_pos = self.seek_table.frame_end_comp(self.upper_frame)?;
         if self.src_pos == 0 {
-            let start_pos = self.seek_table.frame_compressed_start(self.lower_frame)?;
+            let start_pos = self.seek_table.frame_start_comp(self.lower_frame)?;
             self.src.set_offset(start_pos)?;
             self.src_pos = start_pos;
             self.decomp.reset_frame()?;
@@ -223,10 +229,8 @@ where
         let mut output_progress = 0;
         while self.src_pos < end_pos && output_progress < buf.len() {
             if self.in_buf_pos == self.in_buf_limit {
-                let remaining: usize = (end_pos - self.src_pos)
-                    .try_into()
-                    .expect("remaining bytes fit in usize");
-                let limit = self.in_buf.len().min(remaining);
+                // Casting is ok because max value is buf.len()
+                let limit = (end_pos - self.src_pos).min(self.in_buf.len() as u64) as usize;
                 self.in_buf_limit = self.src.read(&mut self.in_buf[..limit])?;
                 self.in_buf_pos = 0;
             }
@@ -242,7 +246,7 @@ where
                         // self.src_pos + offset will be the ending of the frame we just finished,
                         // which is also the start of the next frame. Subtract 1 to get the index
                         // of the right frame.
-                        .frame_index_at_compressed_offset(self.src_pos + offset as u64 - 1);
+                        .frame_index_comp(self.src_pos + offset as u64 - 1);
                     let expected = self
                         .seek_table
                         .frame_checksum(index)?

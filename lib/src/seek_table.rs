@@ -219,8 +219,7 @@ impl SeekTable {
         Ok(parser.into())
     }
 
-    fn frame_index_at_offset(&self, offset: u64, callback: impl Fn(u32) -> u64) -> u32 {
-        // let num_frames: usize = self.num_frames.try_into().expect("frame number fits usize");
+    fn frame_index_at(&self, offset: u64, callback: impl Fn(u32) -> u64) -> u32 {
         if offset >= callback(self.num_frames) {
             return self.num_frames;
         }
@@ -266,21 +265,21 @@ impl SeekTable {
     }
 
     /// Gets the frame index at the given compressed offset.
-    pub fn frame_index_at_compressed_offset(&self, offset: u64) -> u32 {
-        self.frame_index_at_offset(offset, |i| self.entries[i].c_offset)
+    pub fn frame_index_comp(&self, offset: u64) -> u32 {
+        self.frame_index_at(offset, |i| self.entries[i].c_offset)
     }
 
     /// Gets the frame index at the given decompressed offset.
-    pub fn frame_index_at_decompressed_offset(&self, offset: u64) -> u32 {
-        self.frame_index_at_offset(offset, |i| self.entries[i].d_offset)
+    pub fn frame_index_decomp(&self, offset: u64) -> u32 {
+        self.frame_index_at(offset, |i| self.entries[i].d_offset)
     }
 
-    /// Gets the start position of the frame at `index` in the compressed data.
+    /// Gets the start position of frame `index` in the compressed data.
     ///
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
-    pub fn frame_compressed_start(&self, index: u32) -> Result<u64> {
+    pub fn frame_start_comp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames {
             return Err(Error::frame_index_too_large());
         }
@@ -288,12 +287,12 @@ impl SeekTable {
         Ok(self.entries[index].c_offset)
     }
 
-    /// Gets the start position of the frame at `index` in the decompressed data.
+    /// Gets the start position of frame `index` in the decompressed data.
     ///
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
-    pub fn frame_decompressed_start(&self, index: u32) -> Result<u64> {
+    pub fn frame_start_decomp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames {
             return Err(Error::frame_index_too_large());
         }
@@ -301,12 +300,12 @@ impl SeekTable {
         Ok(self.entries[index].d_offset)
     }
 
-    /// Gets the end position of the frame at `index` in the compressed data.
+    /// Gets the end position of frame `index` in the compressed data.
     ///
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
-    pub fn frame_compressed_end(&self, index: u32) -> Result<u64> {
+    pub fn frame_end_comp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames {
             return Err(Error::frame_index_too_large());
         }
@@ -314,12 +313,12 @@ impl SeekTable {
         Ok(self.entries[index + 1].c_offset)
     }
 
-    /// Gets the end position of the frame at `index` in the decompressed data.
+    /// Gets the end position of frame `index` in the decompressed data.
     ///
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
-    pub fn frame_decompressed_end(&self, index: u32) -> Result<u64> {
+    pub fn frame_end_decomp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames {
             return Err(Error::frame_index_too_large());
         }
@@ -327,12 +326,12 @@ impl SeekTable {
         Ok(self.entries[index + 1].d_offset)
     }
 
-    /// Gets the compressed size of the frame at `index`.
+    /// Gets the compressed size of frame `index`.
     ///
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
-    pub fn frame_compressed_size(&self, index: u32) -> Result<u64> {
+    pub fn frame_size_comp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames {
             return Err(Error::frame_index_too_large());
         }
@@ -341,12 +340,12 @@ impl SeekTable {
         Ok(size)
     }
 
-    /// Gets the decompressed size of the frame at `index`.
+    /// Gets the decompressed size of frame `index`.
     ///
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
-    pub fn frame_decompressed_size(&self, index: u32) -> Result<u64> {
+    pub fn frame_size_decomp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames {
             return Err(Error::frame_index_too_large());
         }
