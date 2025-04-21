@@ -353,4 +353,26 @@ impl SeekTable {
         let size = self.entries[index + 1].d_offset - self.entries[index].d_offset;
         Ok(size)
     }
+
+    /// Gets the maximum compressed frame size.
+    pub fn max_frame_size_comp(&self) -> u64 {
+        (0..self.num_frames)
+            .map(|i| {
+                self.frame_size_decomp(i)
+                    .expect("Frame index is never out of range")
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Gets the maximum decompressed frame size.
+    pub fn max_frame_size_decomp(&self) -> u64 {
+        (0..self.num_frames)
+            .map(|i| {
+                self.frame_size_decomp(i)
+                    .expect("Frame index is never out of range")
+            })
+            .max()
+            .unwrap_or(0)
+    }
 }
