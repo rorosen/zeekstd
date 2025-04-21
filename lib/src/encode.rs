@@ -154,7 +154,7 @@ where
         let comp = self.into_raw_encoder()?;
 
         Ok(Encoder {
-            comp,
+            raw: comp,
             out_buf: vec![0; CCtx::out_size()],
             out_buf_pos: 0,
             writer,
@@ -177,7 +177,7 @@ pub struct RawEncoder<'c, 'p> {
 }
 
 impl RawEncoder<'_, '_> {
-    /// Creates a new `Compressor` with default parameters.
+    /// Creates a new `RawEncoder` with default parameters.
     pub fn new() -> Result<Self> {
         EncodeOptions::new().into_raw_encoder()
     }
@@ -352,14 +352,14 @@ where
         Ok(())
     }
 
-    /// Transforms this `Compressor` into an encoder.
+    /// Transforms this `RawEncoder` into an [`Encoder`].
     ///
     /// Resets any frame progress. The encoder will write all output data to `writer`.
     pub fn into_encoder<W>(mut self, writer: W) -> Result<Encoder<'c, 'p, W>> {
         self.reset_frame()?;
 
         Ok(Encoder {
-            comp: self,
+            raw: self,
             out_buf: vec![0; CCtx::out_size()],
             out_buf_pos: 0,
             writer,
@@ -372,7 +372,7 @@ where
 ///
 /// The compressed data gets written to an internal writer.
 pub struct Encoder<'c, 'p, W> {
-    comp: RawEncoder<'c, 'p>,
+    raw: RawEncoder<'c, 'p>,
     out_buf: Vec<u8>,
     out_buf_pos: usize,
     writer: W,
@@ -399,7 +399,7 @@ where
         let mut input_progress = 0;
 
         while input_progress < buf.len() {
-            let (inp_prog, out_prog) = self.comp.compress(
+            let (inp_prog, out_prog) = self.raw.compress(
                 &buf[input_progress..],
                 &mut self.out_buf[self.out_buf_pos..],
             )?;
@@ -418,12 +418,13 @@ where
 
     /// Ends the current frame.
     ///
-    /// Call this to write data to the internal writer. Returns the number of bytes written.
+    /// Call this to write the frame epilogue to the internal writer. Returns the number of bytes
+    /// written.
     pub fn end_frame(&mut self) -> Result<usize> {
         let mut progress = 0;
 
         loop {
-            let (prog, n) = self.comp.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
+            let (prog, n) = self.raw.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
             self.out_buf_pos += prog;
             self.flush_out_buf()?;
             progress += prog;
@@ -440,10 +441,10 @@ where
     /// compressed bytes written by this `Encoder`.
     pub fn finish(mut self) -> Result<u64> {
         let mut progress = 0;
-        self.comp.remove_prefix();
+        self.raw.remove_prefix();
 
         loop {
-            let (prog, n) = self.comp.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
+            let (prog, n) = self.raw.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
             self.out_buf_pos += prog;
             self.flush_out_buf()?;
             progress += prog;
@@ -455,7 +456,7 @@ where
 
         loop {
             let n = self
-                .comp
+                .raw
                 .write_seek_table_into(&mut self.out_buf[self.out_buf_pos..]);
             if n == 0 {
                 self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
