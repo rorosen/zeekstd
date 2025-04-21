@@ -70,7 +70,7 @@ impl<'d, 'p> DecodeOptions<'d, 'p> {
     /// # Errors
     ///
     /// Fails if zstd returns an error.
-    pub fn into_decoder<S: Seekable>(self, mut src: S) -> Result<Decoder<'p, 'd, S>>
+    pub fn into_decoder<S: Seekable>(self, mut src: S) -> Result<Decoder<'d, 'p, S>>
     where
         'p: 'd,
     {
@@ -182,8 +182,8 @@ where
 }
 
 /// Decompresses data from a seekable source.
-pub struct Decoder<'p, 'd, S> {
-    decomp: RawDecoder<'d, 'p>,
+pub struct Decoder<'d, 'p, S> {
+    raw: RawDecoder<'d, 'p>,
     seek_table: SeekTable,
     src: S,
     src_pos: u64,
@@ -212,7 +212,7 @@ impl<S: Seekable> Decoder<'_, '_, S> {
 impl<'d, 'p, S> Decoder<'d, 'p, S>
 where
     S: Seekable,
-    'd: 'p,
+    'p: 'd,
 {
     /// Decompresses data from the internal source and writes it to `buf`.
     ///
@@ -308,7 +308,7 @@ impl<S> Deref for Decoder<'_, '_, S> {
 impl<'d, 'p, S> std::io::Read for Decoder<'d, 'p, S>
 where
     S: Seekable,
-    'd: 'p,
+    'p: 'd,
 {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.decode(buf).map_err(std::io::Error::other)
