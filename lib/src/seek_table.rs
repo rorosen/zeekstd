@@ -221,7 +221,7 @@ impl SeekTable {
 
     fn frame_index_at(&self, offset: u64, callback: impl Fn(u32) -> u64) -> u32 {
         if offset >= callback(self.num_frames) {
-            return self.num_frames;
+            return self.num_frames - 1;
         }
 
         let mut low = 0;
@@ -244,7 +244,7 @@ impl SeekTable {
         self.num_frames
     }
 
-    /// Whether the frames contain a checksum.
+    /// Whether the frames do have checksums.
     pub fn with_checksum(&self) -> bool {
         self.with_checksum
     }
