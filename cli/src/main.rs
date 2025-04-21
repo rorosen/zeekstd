@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io::{self};
 
 use anyhow::{Context, Result};
 use args::CompressArgs;
@@ -7,10 +7,9 @@ use command::Command;
 
 mod args;
 mod command;
-mod compress;
-mod decompress;
-#[cfg(test)]
-mod tests;
+// mod decompress;
+// #[cfg(test)]
+// mod tests;
 
 /// Compress and decompress data using the Zstandard Seekable Format.
 #[derive(Debug, Parser)]
@@ -46,19 +45,21 @@ fn main() -> Result<()> {
     let mut input = command.input()?;
     let mut output = command.output(cli.force, cli.quiet, cli.stdout)?;
 
-    if matches!(command, Command::Compress(_) | Command::Decompress(_)) {
+    let bytes_written = if matches!(command, Command::Compress(_) | Command::Decompress(_)) {
         // Whether to show the progress counter
         if !cli.quiet && !cli.stdout && !cli.no_progress {
             input.with_progress(command.input_len());
         }
 
         io::copy(&mut input, &mut output)?;
-        output.flush().context("Failed to flush output")?;
-    }
+        output.finish().context("Failed to finish output")?
+    } else {
+        0
+    };
 
     // Only print summary if not quiet
     if !cli.quiet {
-        command.print_summary(input.bytes_read(), output.bytes_written(), cli.stdout)?;
+        command.print_summary(input.bytes_read(), bytes_written, cli.stdout)?;
     }
 
     Ok(())

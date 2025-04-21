@@ -2,18 +2,18 @@ use std::{path::PathBuf, str::FromStr};
 
 use anyhow::bail;
 use clap::Parser;
-use zstd_safe::{CompressionLevel, seekable::Seekable};
+use zeekstd::{CompressionLevel, SeekTable};
 
 #[derive(Debug, Clone)]
-pub struct ByteValue(u64);
+pub struct ByteValue(u32);
 
 impl ByteValue {
     pub fn as_u64(&self) -> u64 {
-        self.0
+        self.0 as u64
     }
 
     pub fn as_u32(&self) -> u32 {
-        self.0 as u32
+        self.0
     }
 }
 
@@ -25,7 +25,7 @@ impl FromStr for ByteValue {
             .chars()
             .filter(|c| !c.is_whitespace())
             .partition(|c| c.is_ascii_digit());
-        let value: u64 = value.parse()?;
+        let value = value.parse()?;
 
         let value = match unit.as_str() {
             "" | "B" => value,
@@ -82,7 +82,7 @@ pub struct CompressArgs {
 
     /// The frame size at which to start a new seekable frame. Accepts the suffixes kib, mib, gib
     /// and tib.
-    #[arg(long, default_value = "8192")]
+    #[arg(long, default_value = "2M")]
     pub max_frame_size: ByteValue,
 
     /// Input file.
@@ -151,24 +151,24 @@ pub struct ListArgs {
 }
 
 impl ListArgs {
-    pub fn start_frame(&self, seekable: &Seekable) -> Option<u32> {
+    pub fn start_frame(&self, seek_table: &SeekTable) -> Option<u32> {
         if self.from_frame.is_some() {
             self.from_frame
         } else {
             self.from
                 .as_ref()
-                .map(|offset| seekable.offset_to_frame_index(offset.as_u64()))
+                .map(|offset| seek_table.frame_index_decomp(offset.as_u64()))
         }
     }
 
-    pub fn end_frame(&self, seekable: &Seekable) -> Option<u32> {
+    pub fn end_frame(&self, seek_table: &SeekTable) -> Option<u32> {
         if self.to_frame.is_some() {
             self.to_frame
         } else if let Some(offset) = &self.to {
-            Some(seekable.offset_to_frame_index(offset.as_u64()))
+            Some(seek_table.frame_index_decomp(offset.as_u64()))
         } else {
             self.num_frames
-                .map(|num| self.start_frame(seekable).unwrap_or(0) + num)
+                .map(|num| self.start_frame(seek_table).unwrap_or(0) + num)
         }
     }
 }
@@ -218,21 +218,11 @@ mod tests {
 
     #[test]
     fn test_byte_value_from_str_valid_gib() {
-        for input in ["10G", "10 G", "10 gib", "10   gib"] {
+        for input in ["2G", "2 G", "2 gib", "2   gib"] {
             let result = ByteValue::from_str(input);
             assert!(result.is_ok());
             let parsed_value = result.unwrap();
-            assert_eq!(parsed_value.0, 10 * 1024 * 1024 * 1024);
-        }
-    }
-
-    #[test]
-    fn test_byte_value_from_str_valid_tib() {
-        for input in ["10T", "10 T", "10 tib", "10   tib"] {
-            let result = ByteValue::from_str(input);
-            assert!(result.is_ok());
-            let parsed_value = result.unwrap();
-            assert_eq!(parsed_value.0, 10 * 1024 * 1024 * 1024 * 1024);
+            assert_eq!(parsed_value.0, 2 * 1024 * 1024 * 1024);
         }
     }
 

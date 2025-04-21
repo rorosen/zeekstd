@@ -9,13 +9,10 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use indicatif::{HumanBytes, ProgressBar, ProgressDrawTarget, ProgressStyle};
-use zstd_safe::seekable::Seekable;
+use zeekstd::{Decoder, EncodeOptions, Encoder, FrameSizePolicy, SeekTable};
+use zstd_safe::{CCtx, CParameter};
 
-use crate::{
-    args::{CompressArgs, DecompressArgs, ListArgs},
-    compress::Compressor,
-    decompress::Decompressor,
-};
+use crate::args::{CompressArgs, DecompressArgs, ListArgs};
 
 // HumanBytes can mess up intendation if not formatted
 #[inline]
@@ -104,7 +101,7 @@ impl Command {
         }
     }
 
-    pub fn input(&self) -> Result<Input<'_>> {
+    pub fn input(&self) -> Result<Input<'_, '_>> {
         let reader = match self {
             Self::Compress(args) => match self.input_file_str() {
                 Some("-") => InputReader::new_stdin(),
@@ -153,8 +150,21 @@ impl Command {
         };
 
         if let Self::Compress(cargs) = self {
-            let compressor = Compressor::new(cargs, writer)?;
-            Ok(Output::Compressor(compressor))
+            let mut cctx = CCtx::try_create().context("Failed to create compression context")?;
+            cctx.set_parameter(CParameter::CompressionLevel(cargs.compression_level))
+                .map_err(|c| {
+                    anyhow!(
+                        "Failed to set compression level: {}",
+                        zstd_safe::get_error_name(c)
+                    )
+                })?;
+            let encoder = EncodeOptions::new()
+                .cctx(cctx)
+                .with_checksum(!cargs.no_checksum)
+                .frame_size_policy(FrameSizePolicy::Decompressed(cargs.max_frame_size.as_u32()))
+                .into_encoder(writer)?;
+
+            Ok(Output::Compressor(Box::new(encoder)))
         } else {
             Ok(Output::Writer {
                 writer,
@@ -188,23 +198,17 @@ impl Command {
                 eprintln!("{input_path} : {}", HumanBytes(bytes_read))
             }
             Self::List(args) => {
-                let file = File::open(&args.input_file).context("Failed to open input file")?;
-                let seekable =
-                    Seekable::try_create().context("Failed to create seekable object")?;
-                let seekable = seekable.init_advanced(Box::new(file)).map_err(|c| {
-                    anyhow!(
-                        "Failed to initialize seekable object: {}",
-                        zstd_safe::get_error_name(c)
-                    )
-                })?;
+                let mut file = File::open(&args.input_file).context("Failed to open input file")?;
+                let seek_table =
+                    SeekTable::from_seekable(&mut file).context("Failed to read seek table")?;
 
-                let start_frame = args.start_frame(&seekable);
-                let end_frame = args.end_frame(&seekable);
+                let start_frame = args.start_frame(&seek_table);
+                let end_frame = args.end_frame(&seek_table);
 
                 if start_frame.is_none() && end_frame.is_none() {
-                    self.summarize_seekable(&seekable);
+                    self.summarize_seekable(&seek_table);
                 } else {
-                    list_frames(&seekable, start_frame, end_frame)?;
+                    list_frames(&seek_table, start_frame, end_frame)?;
                 }
             }
             _ => (),
@@ -213,20 +217,15 @@ impl Command {
         Ok(())
     }
 
-    fn summarize_seekable(&self, seekable: &Seekable) {
-        let num_frames = seekable.num_frames();
-        let compressed = (0..num_frames).fold(0u64, |acc, n| {
-            acc + seekable
-                .frame_compressed_size(n)
-                .expect("Frame index is never out of range") as u64
-        });
-        let decompressed_iter = (0..num_frames).map(|n| {
-            seekable
-                .frame_decompressed_size(n)
-                .expect("Frame index is never out of range") as u64
-        });
-        let max_frame_size = decompressed_iter.clone().max();
-        let decompressed = decompressed_iter.sum::<u64>();
+    fn summarize_seekable(&self, seek_table: &SeekTable) {
+        let num_frames = seek_table.num_frames();
+        let compressed = seek_table
+            .frame_end_comp(num_frames - 1)
+            .expect("Frame index is never out of range");
+        let decompressed = seek_table
+            .frame_end_decomp(num_frames - 1)
+            .expect("Frame index is never out of range");
+        let max_frame_size = seek_table.max_frame_size_decomp();
         let ratio = decompressed as f64 / compressed as f64;
 
         eprintln!(
@@ -238,20 +237,20 @@ impl Command {
             num_frames,
             format_bytes(compressed),
             format_bytes(decompressed),
-            format_bytes(max_frame_size.unwrap_or(0)),
+            format_bytes(max_frame_size),
             ratio,
             self.input_file_str().unwrap_or("")
         );
     }
 }
 
-enum InputReader<'a> {
+enum InputReader<'d, 'p> {
     Stdin { stdin: Stdin, bytes_read: u64 },
     File { file: File, bytes_read: u64 },
-    Decompressor(Decompressor<'a, File>),
+    Decompressor(Box<Decoder<'d, 'p, File>>),
 }
 
-impl InputReader<'_> {
+impl InputReader<'_, '_> {
     fn new_stdin() -> Self {
         Self::Stdin {
             stdin: io::stdin(),
@@ -268,19 +267,31 @@ impl InputReader<'_> {
     }
 
     fn new_decompressor(args: &DecompressArgs) -> Result<Self> {
-        let file = File::open(&args.input_file).context("Failed to open input file")?;
-        let decompressor = Decompressor::new(file, args)?;
+        let seekable = File::open(&args.input_file).context("Failed to open input file")?;
+        let mut decoder = Decoder::from_seekable(seekable).context("Failed to create decoder")?;
+        let lower_frame = match args.from_frame {
+            Some(idx) => idx,
+            None => decoder.frame_index_decomp(args.from.as_u64()),
+        };
+        let upper_frame = match args.to_frame {
+            Some(idx) => idx,
+            None => decoder.frame_index_decomp(args.to.as_u64()),
+        };
+        decoder
+            .set_lower_frame(lower_frame)
+            .context("Failed to set lower frame")?;
+        decoder.set_upper_frame(upper_frame);
 
-        Ok(Self::Decompressor(decompressor))
+        Ok(Self::Decompressor(Box::new(decoder)))
     }
 }
 
-pub struct Input<'a> {
+pub struct Input<'d, 'p> {
     bar: Option<ProgressBar>,
-    reader: InputReader<'a>,
+    reader: InputReader<'d, 'p>,
 }
 
-impl Input<'_> {
+impl Input<'_, '_> {
     pub fn with_progress(&mut self, input_len: Option<u64>) {
         let bar = ProgressBar::with_draw_target(input_len, ProgressDrawTarget::stderr_with_hz(5))
             .with_style(
@@ -295,12 +306,15 @@ impl Input<'_> {
         match &self.reader {
             InputReader::Stdin { bytes_read, .. } => *bytes_read,
             InputReader::File { bytes_read, .. } => *bytes_read,
-            InputReader::Decompressor(decompressor) => decompressor.bytes_read(),
+            InputReader::Decompressor(decompressor) => decompressor.read_uncompressed(),
         }
     }
 }
 
-impl Read for Input<'_> {
+impl<'d, 'p> Read for Input<'d, 'p>
+where
+    'p: 'd,
+{
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = match &mut self.reader {
             InputReader::Stdin {
@@ -333,24 +347,30 @@ impl Read for Input<'_> {
     }
 }
 
-pub enum Output {
+pub enum Output<'c, 'p> {
     Writer {
         writer: Box<dyn Write>,
         bytes_written: u64,
     },
-    Compressor(Compressor<Box<dyn Write>>),
+    Compressor(Box<Encoder<'c, 'p, Box<dyn Write>>>),
 }
 
-impl Output {
-    pub fn bytes_written(&self) -> u64 {
-        match &self {
-            Self::Writer { bytes_written, .. } => *bytes_written,
-            Self::Compressor(compressor) => compressor.bytes_written(),
+impl Output<'_, '_> {
+    pub fn finish(self) -> Result<u64> {
+        match self {
+            Output::Writer {
+                mut writer,
+                bytes_written,
+            } => {
+                writer.flush()?;
+                Ok(bytes_written)
+            }
+            Output::Compressor(compressor) => Ok(compressor.finish()?),
         }
     }
 }
 
-impl Write for Output {
+impl<'c, 'p: 'c> Write for Output<'c, 'p> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let n = match self {
             Self::Writer {
@@ -375,17 +395,18 @@ impl Write for Output {
 }
 
 fn list_frames(
-    seekable: &Seekable,
+    seekable: &SeekTable,
     start_frame: Option<u32>,
     end_frame: Option<u32>,
 ) -> Result<()> {
-    let map_error_code = |index, code| {
-        anyhow!(
-            "Failed to get data of frame {index}: {}",
-            zstd_safe::get_error_name(code)
-        )
-    };
-    let map_index_err = |index, err| anyhow!("Failed to get data of frame {index}: {err}");
+    let frame_err_context = |index| format!("Failed to get data of frame {index}");
+    // let map_error_code = |index, code| {
+    //     anyhow!(
+    //         "Failed to get data of frame {index}: {}",
+    //         zstd_safe::get_error_name(code)
+    //     )
+    // };
+    // let map_index_err = |index, err| anyhow!("Failed to get data of frame {index}: {err}");
 
     let start = start_frame.unwrap_or(0);
     let end = end_frame.unwrap_or_else(|| seekable.num_frames());
@@ -403,20 +424,20 @@ fn list_frames(
             n,
             format_bytes(
                 seekable
-                    .frame_compressed_size(n)
-                    .map_err(|c| map_error_code(n, c))? as u64
+                    .frame_size_comp(n)
+                    .with_context(|| frame_err_context(n))?
             ),
             format_bytes(
                 seekable
-                    .frame_decompressed_size(n)
-                    .map_err(|c| map_error_code(n, c))? as u64
+                    .frame_size_decomp(n)
+                    .with_context(|| frame_err_context(n))?
             ),
             seekable
-                .frame_compressed_offset(n)
-                .map_err(|err| map_index_err(n, err))?,
+                .frame_start_comp(n)
+                .with_context(|| frame_err_context(n))?,
             seekable
-                .frame_decompressed_offset(n)
-                .map_err(|err| map_index_err(n, err))?,
+                .frame_start_decomp(n)
+                .with_context(|| frame_err_context(n))?,
         );
     }
 

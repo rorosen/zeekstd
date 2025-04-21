@@ -10,3 +10,6 @@ repository = "https://github.com/rorosen/zeekstd"
 readme = "README.md"
 keywords = [ "zstd", "zstandard", "compression", "zstd-seekable-format" ]
 categories = [ "compression" ]
+
+[workspace.dependencies]
+zstd-safe = { version = "7.2.4", features = ["std"] }

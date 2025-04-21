@@ -12,4 +12,4 @@ readme.workspace = true
 
 [dependencies]
 xxhash-rust = { version = "0.8.15", features = ["xxh64"] }
-zstd-safe = { version = "7.2.4", features = ["std"] }
+zstd-safe = { workspace = true, features = ["std"] }

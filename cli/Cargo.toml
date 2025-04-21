@@ -18,4 +18,5 @@ path = "src/main.rs"
 anyhow = "1.0.98"
 clap = { version = "4.5.36", features = ["derive"] }
 indicatif = "0.17.11"
-zstd-safe = { version = "7.2.4", features = ["std", "seekable"] }
+zeekstd = { path = "../lib" }
+zstd-safe = { workspace = true, features = ["std", "seekable"] }
