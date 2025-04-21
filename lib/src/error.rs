@@ -10,6 +10,20 @@ pub struct Error {
 }
 
 impl Error {
+    pub fn other<E>(err: E) -> Self
+    where
+        E: Into<Box<dyn core::error::Error + Send + Sync>>,
+    {
+        Self {
+            kind: Kind::Other(err.into()),
+        }
+    }
+
+    /// Returns true if the error is of type "Other".
+    pub fn is_other(&self) -> bool {
+        matches!(self.kind, Kind::Other(_))
+    }
+
     pub(crate) fn offset_out_of_range() -> Self {
         Self {
             kind: Kind::OffsetOutOfRange,
@@ -93,6 +107,7 @@ impl Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
+            Kind::Other(err) => write!(f, "{err}"),
             Kind::NumberConversionFailed(err) => write!(f, "number conversion failed: {err}"),
             Kind::OffsetOutOfRange => f.write_str("offset out of range"),
             Kind::WriteInProgress => f.write_str("not supported when writing"),
@@ -133,6 +148,7 @@ impl From<ErrorCode> for Error {
 }
 
 enum Kind {
+    Other(Box<dyn core::error::Error + Send + Sync>),
     /// Out of range integral type conversion attempted
     NumberConversionFailed(core::num::TryFromIntError),
     /// The desired offset is out of range.
@@ -156,16 +172,17 @@ enum Kind {
 impl core::fmt::Debug for Kind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Other(arg0) => f.debug_tuple("Other").field(arg0).finish(),
             Self::NumberConversionFailed(arg0) => {
                 f.debug_tuple("NumberConversionFailed").field(arg0).finish()
             }
             Self::OffsetOutOfRange => write!(f, "OffsetOutOfRange"),
-            Self::WriteInProgress => write!(f, "SerializeInProgress"),
+            Self::WriteInProgress => write!(f, "WriteInProgress"),
             Self::FrameIndexTooLarge => write!(f, "FrameIndexTooLarge"),
             Self::FrameSizeTooLarge => write!(f, "FrameSizeTooLarge"),
             Self::IO(arg0) => f.debug_tuple("IO").field(arg0).finish(),
             Self::MissingChecksum => write!(f, "MissingChecksum"),
-            Self::ZstdCreate(arg0) => f.debug_tuple("Create").field(arg0).finish(),
+            Self::ZstdCreate(arg0) => f.debug_tuple("ZstdCreate").field(arg0).finish(),
             Self::Zstd(c) => write!(f, "{}; code {}", zstd_safe::get_error_name(*c), c),
         }
     }
