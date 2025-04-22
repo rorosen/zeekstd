@@ -16,8 +16,12 @@ use crate::args::{CompressArgs, DecompressArgs, ListArgs};
 
 // HumanBytes can mess up intendation if not formatted
 #[inline]
-fn format_bytes(n: u64) -> String {
-    format!("{}", HumanBytes(n))
+fn format_bytes(n: u64, human: bool) -> String {
+    if human {
+        format!("{}", HumanBytes(n))
+    } else {
+        format!("{}", n)
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -205,10 +209,10 @@ impl Command {
                 let start_frame = args.start_frame(&seek_table);
                 let end_frame = args.end_frame(&seek_table);
 
-                if start_frame.is_none() && end_frame.is_none() {
-                    self.summarize_seekable(&seek_table);
+                if start_frame.is_none() && end_frame.is_none() && !args.detail {
+                    self.summarize_seekable(&seek_table, args.human_bytes);
                 } else {
-                    list_frames(&seek_table, start_frame, end_frame)?;
+                    list_frames(&seek_table, start_frame, end_frame, args.human_bytes)?;
                 }
             }
             _ => (),
@@ -217,7 +221,7 @@ impl Command {
         Ok(())
     }
 
-    fn summarize_seekable(&self, seek_table: &SeekTable) {
+    fn summarize_seekable(&self, seek_table: &SeekTable, human: bool) {
         let num_frames = seek_table.num_frames();
         let compressed = seek_table
             .frame_end_comp(num_frames - 1)
@@ -234,16 +238,16 @@ impl Command {
             "None"
         };
 
-        eprintln!(
+        println!(
             "{: <15} {: <15} {: <15} {: <15} {: <10} {: <10} {: <15}",
             "Frames", "Compressed", "Uncompressed", "Max Frame Size", "Ratio", "Check", "Filename"
         );
-        eprintln!(
+        println!(
             "{: <15} {: <15} {: <15} {: <15} {: <10.3} {: <10} {: <15}",
             num_frames,
-            format_bytes(compressed),
-            format_bytes(decompressed),
-            format_bytes(max_frame_size),
+            format_bytes(compressed, human),
+            format_bytes(decompressed, human),
+            format_bytes(max_frame_size, human),
             ratio,
             check,
             self.input_file_str().unwrap_or("")
@@ -405,15 +409,20 @@ fn list_frames(
     seekable: &SeekTable,
     start_frame: Option<u32>,
     end_frame: Option<u32>,
+    human: bool,
 ) -> Result<()> {
+    use std::fmt::Write as _;
+
     let frame_err_context = |index| format!("Failed to get data of frame {index}");
     let start = start_frame.unwrap_or(0);
     let end = end_frame.unwrap_or_else(|| seekable.num_frames());
     if start > end {
         bail!("Start frame ({start}) cannot be greater than end frame ({end})");
     }
+    // line length (106) times lines
+    let mut buf = String::with_capacity(106 * 100);
 
-    eprintln!(
+    println!(
         "{: <15} {: <15} {: <15} {: <15} {: <20} {: <20}",
         "Frame Index",
         "Compressed",
@@ -422,29 +431,48 @@ fn list_frames(
         "Compressed Offset",
         "Uncompressed Offset"
     );
+
+    let mut cnt = 0;
     for n in start..end {
-        eprintln!(
-            "{: <15} {: <15} {: <15} {: <#15x} {: <20} {: <20}",
+        cnt += 1;
+        writeln!(
+            &mut buf,
+            "{: <15} {: <15} {: <15} {: <#010X}      {: <20} {: <20}",
             n,
             format_bytes(
                 seekable
                     .frame_size_comp(n)
-                    .with_context(|| frame_err_context(n))?
+                    .with_context(|| frame_err_context(n))?,
+                human
             ),
             format_bytes(
                 seekable
                     .frame_size_decomp(n)
-                    .with_context(|| frame_err_context(n))?
+                    .with_context(|| frame_err_context(n))?,
+                human
             ),
             seekable.frame_checksum(n).unwrap().unwrap_or(0),
-            seekable
-                .frame_start_comp(n)
-                .with_context(|| frame_err_context(n))?,
-            seekable
-                .frame_start_decomp(n)
-                .with_context(|| frame_err_context(n))?,
-        );
+            format_bytes(
+                seekable
+                    .frame_start_comp(n)
+                    .with_context(|| frame_err_context(n))?,
+                human
+            ),
+            format_bytes(
+                seekable
+                    .frame_start_decomp(n)
+                    .with_context(|| frame_err_context(n))?,
+                human
+            ),
+        )?;
+
+        if cnt == 100 {
+            cnt = 0;
+            print!("{buf}");
+            buf.clear();
+        }
     }
+    print!("{buf}");
 
     Ok(())
 }

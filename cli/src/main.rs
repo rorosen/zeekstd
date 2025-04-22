@@ -7,9 +7,6 @@ use command::Command;
 
 mod args;
 mod command;
-// mod decompress;
-// #[cfg(test)]
-// mod tests;
 
 /// Compress and decompress data using the Zstandard Seekable Format.
 #[derive(Debug, Parser)]

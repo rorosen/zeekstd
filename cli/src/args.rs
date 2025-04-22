@@ -146,6 +146,15 @@ pub struct ListArgs {
     #[arg(long, group = "end")]
     pub num_frames: Option<u32>,
 
+    /// Detailed listing of individual frames, automatically implied when frame boundaries are
+    /// provided.
+    #[arg(short, long, action)]
+    pub detail: bool,
+
+    /// Print human readable byte values like 1KiB.
+    #[arg(short = 'b', long, action)]
+    pub human_bytes: bool,
+
     /// Input file.
     pub input_file: PathBuf,
 }
