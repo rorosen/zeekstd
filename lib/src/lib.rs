@@ -85,7 +85,7 @@ pub const SKIPPABLE_HEADER_SIZE: usize = 8;
 pub const SEEK_TABLE_FOOTER_SIZE: usize = 9;
 /// The maximum number of frames in a seekable archive.
 pub const SEEKABLE_MAX_FRAMES: usize = 0x8000000;
-/// The maximum size of the decompressed data of a frame.
+/// The maximum size of the uncompressed data of a frame.
 pub const SEEKABLE_MAX_FRAME_SIZE: usize = 0x40000000;
 
 #[doc = include_str!("../../README.md")]
@@ -177,9 +177,6 @@ mod tests {
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = Encoder::new(&mut seekable)?;
-        // let mut encoder = CompressOptions::new()
-        //     .frame_size_policy(FrameSizePolicy::Decompressed(512))
-        //     .into_encoder(&mut seekable)?;
 
         // Compress the input
         io::copy(&mut input, &mut encoder)?;
@@ -209,7 +206,7 @@ mod tests {
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = EncodeOptions::new()
-            .frame_size_policy(FrameSizePolicy::Decompressed(LINE_LEN * LINES_IN_FRAME))
+            .frame_size_policy(FrameSizePolicy::Uncompressed(LINE_LEN * LINES_IN_FRAME))
             .into_encoder(&mut seekable)
             .unwrap();
 

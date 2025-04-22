@@ -13,26 +13,26 @@ pub enum FrameSizePolicy {
     /// size.
     ///
     /// The compressed frames can be slightly larger than `size`, depending on the write buffer
-    /// size. A new frame will always be started if the decompressed frame size reaches
+    /// size. A new frame will always be started if the uncompressed frame size reaches
     /// [`SEEKABLE_MAX_FRAME_SIZE`], independent of the configured compressed size.
     Compressed(u32),
-    /// Starts a new frame when the decompressed data of the current frame reaches the specified
+    /// Starts a new frame when the uncompressed data of the current frame reaches the specified
     /// size.
-    Decompressed(u32),
+    Uncompressed(u32),
 }
 
 impl Default for FrameSizePolicy {
-    /// The default policy starts a new frame when the decompressed data of the current frame
+    /// The default policy starts a new frame when the uncompressed data of the current frame
     /// reaches 2MiB.
     fn default() -> Self {
-        Self::Decompressed(0x200_000)
+        Self::Uncompressed(0x200_000)
     }
 }
 
 impl FrameSizePolicy {
     fn size(&self) -> u32 {
         match self {
-            FrameSizePolicy::Compressed(size) | FrameSizePolicy::Decompressed(size) => *size,
+            FrameSizePolicy::Compressed(size) | FrameSizePolicy::Uncompressed(size) => *size,
         }
     }
 }
@@ -48,7 +48,7 @@ impl FrameSizePolicy {
 /// use zeekstd::{EncodeOptions, FrameSizePolicy};
 ///
 /// let compressor = EncodeOptions::new()
-///     .frame_size_policy(FrameSizePolicy::Decompressed(8192))
+///     .frame_size_policy(FrameSizePolicy::Uncompressed(8192))
 ///     .with_checksum(false)
 ///     .into_raw_encoder()?;
 /// # Ok::<(), zeekstd::Error>(())
@@ -186,7 +186,7 @@ impl RawEncoder<'_, '_> {
         let n = match self.frame_policy {
             // SEEKABLE_MAX_FRAME_SIZE always fits in u32
             FrameSizePolicy::Compressed(_) => SEEKABLE_MAX_FRAME_SIZE as u32 - self.frame_d_size,
-            FrameSizePolicy::Decompressed(limit) => limit - self.frame_d_size,
+            FrameSizePolicy::Uncompressed(limit) => limit - self.frame_d_size,
         };
 
         n.try_into().expect("Remaining frame space fits in usize")
@@ -198,7 +198,7 @@ impl RawEncoder<'_, '_> {
                 // SEEKABLE_MAX_FRAME_SIZE always fits in u32
                 size <= self.frame_c_size || self.frame_d_size >= SEEKABLE_MAX_FRAME_SIZE as u32
             }
-            FrameSizePolicy::Decompressed(limit) => limit <= self.frame_d_size,
+            FrameSizePolicy::Uncompressed(limit) => limit <= self.frame_d_size,
         }
     }
 }
