@@ -161,7 +161,7 @@ impl Command {
             let encoder = EncodeOptions::new()
                 .cctx(cctx)
                 .with_checksum(!cargs.no_checksum)
-                .frame_size_policy(FrameSizePolicy::Decompressed(cargs.max_frame_size.as_u32()))
+                .frame_size_policy(FrameSizePolicy::Uncompressed(cargs.max_frame_size.as_u32()))
                 .into_encoder(writer)?;
 
             Ok(Output::Compressor(Box::new(encoder)))
@@ -227,18 +227,25 @@ impl Command {
             .expect("Frame index is never out of range");
         let max_frame_size = seek_table.max_frame_size_decomp();
         let ratio = decompressed as f64 / compressed as f64;
+        let check = if seek_table.with_checksum() {
+            // Only possible checksum
+            "XXH64"
+        } else {
+            "None"
+        };
 
         eprintln!(
-            "{: <15} {: <15} {: <15} {: <15} {: <15} {: <15}",
-            "Frames", "Compressed", "Decompressed", "Max Frame Size", "Ratio", "Filename"
+            "{: <15} {: <15} {: <15} {: <15} {: <10} {: <10} {: <15}",
+            "Frames", "Compressed", "Uncompressed", "Max Frame Size", "Ratio", "Check", "Filename"
         );
         eprintln!(
-            "{: <15} {: <15} {: <15} {: <15} {: <15.3} {: <15}",
+            "{: <15} {: <15} {: <15} {: <15} {: <10.3} {: <10} {: <15}",
             num_frames,
             format_bytes(compressed),
             format_bytes(decompressed),
             format_bytes(max_frame_size),
             ratio,
+            check,
             self.input_file_str().unwrap_or("")
         );
     }
@@ -400,14 +407,6 @@ fn list_frames(
     end_frame: Option<u32>,
 ) -> Result<()> {
     let frame_err_context = |index| format!("Failed to get data of frame {index}");
-    // let map_error_code = |index, code| {
-    //     anyhow!(
-    //         "Failed to get data of frame {index}: {}",
-    //         zstd_safe::get_error_name(code)
-    //     )
-    // };
-    // let map_index_err = |index, err| anyhow!("Failed to get data of frame {index}: {err}");
-
     let start = start_frame.unwrap_or(0);
     let end = end_frame.unwrap_or_else(|| seekable.num_frames());
     if start > end {
@@ -415,12 +414,17 @@ fn list_frames(
     }
 
     eprintln!(
-        "{: <15} {: <15} {: <15} {: <20} {: <20}",
-        "Frame Index", "Compressed", "Decompressed", "Compressed Offset", "Decompressed Offset"
+        "{: <15} {: <15} {: <15} {: <15} {: <20} {: <20}",
+        "Frame Index",
+        "Compressed",
+        "Uncompressed",
+        "Checksum",
+        "Compressed Offset",
+        "Uncompressed Offset"
     );
     for n in start..end {
         eprintln!(
-            "{: <15} {: <15} {: <15} {: <20} {: <20}",
+            "{: <15} {: <15} {: <15} {: <#15x} {: <20} {: <20}",
             n,
             format_bytes(
                 seekable
@@ -432,6 +436,7 @@ fn list_frames(
                     .frame_size_decomp(n)
                     .with_context(|| frame_err_context(n))?
             ),
+            seekable.frame_checksum(n).unwrap().unwrap_or(0),
             seekable
                 .frame_start_comp(n)
                 .with_context(|| frame_err_context(n))?,

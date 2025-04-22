@@ -96,7 +96,7 @@ pub struct CompressArgs {
 
 #[derive(Debug, Parser)]
 pub struct DecompressArgs {
-    /// The offset (of the decompressed data) where decompression starts. Accepts the special
+    /// The offset (of the uncompressed data) where decompression starts. Accepts the special
     /// values 'start' and 'end'.
     #[arg(long, group = "start", default_value = "start")]
     pub from: ByteOffset,
