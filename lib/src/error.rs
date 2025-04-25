@@ -68,17 +68,6 @@ impl Error {
         matches!(self.kind, Kind::FrameIndexTooLarge)
     }
 
-    pub(crate) fn frame_size_too_large() -> Self {
-        Self {
-            kind: Kind::FrameSizeTooLarge,
-        }
-    }
-
-    /// Returns true if the error is related to a frame size that is too large.
-    pub fn is_frame_size_too_large(&self) -> bool {
-        matches!(self.kind, Kind::FrameSizeTooLarge)
-    }
-
     pub(crate) fn zstd(code: ZSTD_ErrorCode) -> Self {
         // TODO: Using usize for this doesn't seem right
         let wrapped = 0_usize.wrapping_sub(code as usize);
@@ -112,7 +101,6 @@ impl core::fmt::Display for Error {
             Kind::OffsetOutOfRange => f.write_str("offset out of range"),
             Kind::WriteInProgress => f.write_str("not supported when writing"),
             Kind::FrameIndexTooLarge => f.write_str("frame index too large"),
-            Kind::FrameSizeTooLarge => f.write_str("frame size too large"),
             Kind::IO(err) => write!(f, "io error: {err}"),
             Kind::MissingChecksum => f.write_str("checksum is required"),
             Kind::ZstdCreate(t) => write!(f, "failed to create zstd type {t:?}"),
@@ -157,8 +145,6 @@ enum Kind {
     WriteInProgress,
     /// The passed frame index is too large.
     FrameIndexTooLarge,
-    /// The desired frame size is too large.
-    FrameSizeTooLarge,
     /// IO error.
     IO(std::io::Error),
     /// A required checksum is missing.
@@ -179,7 +165,6 @@ impl core::fmt::Debug for Kind {
             Self::OffsetOutOfRange => write!(f, "OffsetOutOfRange"),
             Self::WriteInProgress => write!(f, "WriteInProgress"),
             Self::FrameIndexTooLarge => write!(f, "FrameIndexTooLarge"),
-            Self::FrameSizeTooLarge => write!(f, "FrameSizeTooLarge"),
             Self::IO(arg0) => f.debug_tuple("IO").field(arg0).finish(),
             Self::MissingChecksum => write!(f, "MissingChecksum"),
             Self::ZstdCreate(arg0) => f.debug_tuple("ZstdCreate").field(arg0).finish(),

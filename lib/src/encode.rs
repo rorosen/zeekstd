@@ -7,14 +7,21 @@ use crate::{
     frame_log::FrameLog,
 };
 
+// Constant value always can be casted
+const MAX_FRAME_SIZE: u32 = SEEKABLE_MAX_FRAME_SIZE as u32;
+
 /// A policy that controls when new frames are started automatically.
+///
+/// The uncompressed frame size will never be greater than [`SEEKABLE_MAX_FRAME_SIZE`],
+/// independent of the frame size policy in use. A new frame will always be started if the
+/// uncompressed frame size reaches [`SEEKABLE_MAX_FRAME_SIZE`].
 pub enum FrameSizePolicy {
     /// Starts a new frame when the compressed size of the current frame exceeds the specified
     /// size.
     ///
-    /// The compressed frames can be slightly larger than `size`, depending on the write buffer
-    /// size. A new frame will always be started if the uncompressed frame size reaches
-    /// [`SEEKABLE_MAX_FRAME_SIZE`], independent of the configured compressed size.
+    /// This will not accurately limit the compressed frame size, it will just start a new frame if
+    /// the actual compressed frame size is equal or exceeds the configured value. The compressed
+    /// frames are typically larger than the given size, depending on the write buffer size.
     Compressed(u32),
     /// Starts a new frame when the uncompressed data of the current frame reaches the specified
     /// size.
@@ -26,14 +33,6 @@ impl Default for FrameSizePolicy {
     /// reaches 2MiB.
     fn default() -> Self {
         Self::Uncompressed(0x200_000)
-    }
-}
-
-impl FrameSizePolicy {
-    fn size(&self) -> u32 {
-        match self {
-            FrameSizePolicy::Compressed(size) | FrameSizePolicy::Uncompressed(size) => *size,
-        }
     }
 }
 
@@ -119,11 +118,6 @@ where
     ///
     /// Fails if zstd returns an error.
     pub fn into_raw_encoder(self) -> Result<RawEncoder<'c, 'p>> {
-        // SEEKABLE_MAX_FRAME_SIZE always fits in u32
-        if self.frame_policy.size() > SEEKABLE_MAX_FRAME_SIZE as u32 {
-            return Err(Error::frame_size_too_large());
-        }
-
         let mut cctx = if let Some(cctx) = self.cctx {
             cctx
         } else {
@@ -182,23 +176,21 @@ impl RawEncoder<'_, '_> {
         EncodeOptions::new().into_raw_encoder()
     }
 
-    fn remaining_frame_space(&self) -> usize {
+    fn remaining_frame_size(&self) -> usize {
         let n = match self.frame_policy {
-            // SEEKABLE_MAX_FRAME_SIZE always fits in u32
-            FrameSizePolicy::Compressed(_) => SEEKABLE_MAX_FRAME_SIZE as u32 - self.frame_d_size,
-            FrameSizePolicy::Uncompressed(limit) => limit - self.frame_d_size,
+            FrameSizePolicy::Compressed(_) => MAX_FRAME_SIZE - self.frame_d_size,
+            FrameSizePolicy::Uncompressed(limit) => MAX_FRAME_SIZE.min(limit) - self.frame_d_size,
         };
 
-        n.try_into().expect("Remaining frame space fits in usize")
+        n.try_into().expect("Remaining frame size fits in usize")
     }
 
     fn is_frame_complete(&self) -> bool {
         match self.frame_policy {
             FrameSizePolicy::Compressed(size) => {
-                // SEEKABLE_MAX_FRAME_SIZE always fits in u32
-                size <= self.frame_c_size || self.frame_d_size >= SEEKABLE_MAX_FRAME_SIZE as u32
+                size <= self.frame_c_size || MAX_FRAME_SIZE <= self.frame_d_size
             }
-            FrameSizePolicy::Uncompressed(limit) => limit <= self.frame_d_size,
+            FrameSizePolicy::Uncompressed(limit) => MAX_FRAME_SIZE.min(limit) <= self.frame_d_size,
         }
     }
 }
@@ -215,7 +207,7 @@ where
     /// must check if `input` has been entirely consumed. If not, the caller must make some room
     /// to receive more compressed data, and then present again remaining input data.
     pub fn compress(&mut self, input: &[u8], output: &mut [u8]) -> Result<(usize, usize)> {
-        let limit = input.len().min(self.remaining_frame_space());
+        let limit = input.len().min(self.remaining_frame_size());
         let mut in_buf = InBuffer::around(&input[..limit]);
         let mut out_buf = OutBuffer::around(output);
 
