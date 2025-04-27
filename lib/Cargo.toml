@@ -11,5 +11,4 @@ repository.workspace = true
 readme.workspace = true
 
 [dependencies]
-xxhash-rust = { version = "0.8.15", features = ["xxh64"] }
 zstd-safe = { workspace = true, features = ["std"] }

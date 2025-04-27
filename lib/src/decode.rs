@@ -1,6 +1,5 @@
 use core::ops::Deref;
 
-use xxhash_rust::xxh64::Xxh64;
 use zstd_safe::{DCtx, InBuffer, OutBuffer, ResetDirective, zstd_sys::ZSTD_ErrorCode};
 
 use crate::{
@@ -43,7 +42,7 @@ impl<'d, 'p> DecodeOptions<'d, 'p> {
     /// # Errors
     ///
     /// Fails if zstd returns an error.
-    pub fn into_raw_decoder(self, with_checksum: bool) -> Result<RawDecoder<'d, 'p>>
+    pub fn into_raw_decoder(self) -> Result<RawDecoder<'d, 'p>>
     where
         'p: 'd,
     {
@@ -56,12 +55,10 @@ impl<'d, 'p> DecodeOptions<'d, 'p> {
         if let Some(prefix) = self.prefix {
             dctx.ref_prefix(prefix)?;
         }
-        let xxh64 = with_checksum.then(|| Xxh64::new(0));
 
         Ok(RawDecoder {
             dctx,
             prefix: self.prefix,
-            xxh64,
         })
     }
 
@@ -75,11 +72,11 @@ impl<'d, 'p> DecodeOptions<'d, 'p> {
         'p: 'd,
     {
         let seek_table = SeekTable::from_seekable(&mut src)?;
-        let decomp = self.into_raw_decoder(seek_table.with_checksum())?;
+        let raw = self.into_raw_decoder()?;
         let upper_frame = seek_table.num_frames() - 1;
 
         Ok(Decoder {
-            raw: decomp,
+            raw,
             seek_table,
             src,
             src_pos: 0,
@@ -99,13 +96,12 @@ impl<'d, 'p> DecodeOptions<'d, 'p> {
 pub struct RawDecoder<'d, 'p> {
     dctx: DCtx<'d>,
     prefix: Option<&'p [u8]>,
-    xxh64: Option<Xxh64>,
 }
 
 impl RawDecoder<'_, '_> {
     /// Create a new `RawDecoder` with default parameters.
-    pub fn new(with_checksum: bool) -> Result<Self> {
-        DecodeOptions::new().into_raw_decoder(with_checksum)
+    pub fn new() -> Result<Self> {
+        DecodeOptions::new().into_raw_decoder()
     }
 }
 
@@ -126,34 +122,14 @@ where
     /// least 32 bit of the XXH64 hash of the decompressed frame data. An `Ok(())` result of
     /// `validate_checksum` indicates that `checksum` was verified successfully, an error return
     /// value will result in a failed decompression immediately.
-    pub fn decompress<F>(
-        &mut self,
-        input: &[u8],
-        output: &mut [u8],
-        validate_checksum: F,
-    ) -> Result<(usize, usize)>
-    where
-        F: Fn(usize, u32) -> Result<()>,
-    {
+    pub fn decompress(&mut self, input: &[u8], output: &mut [u8]) -> Result<(usize, usize)> {
         let mut in_buf = InBuffer::around(input);
         let mut out_buf = OutBuffer::around(output);
 
         while in_buf.pos() < input.len() && out_buf.pos() < out_buf.capacity() {
-            let prev_out_pos = out_buf.pos();
             let n = self.dctx.decompress_stream(&mut out_buf, &mut in_buf)?;
-
-            if let Some(xxh) = &mut self.xxh64 {
-                xxh.update(&out_buf.as_slice()[prev_out_pos..]);
-            }
-
             // Frame end
             if n == 0 {
-                if let Some(xxh) = &mut self.xxh64 {
-                    // Only the least significant 32 bits of the hash are needed, so casting to
-                    // u32 is ok.
-                    validate_checksum(in_buf.pos(), xxh.digest() as u32)?;
-                }
-
                 self.reset_frame()?;
             }
         }
@@ -161,41 +137,41 @@ where
         Ok((in_buf.pos(), out_buf.pos()))
     }
 
-    /// Performs a step of a streaming decompression from `input` to `output`.
-    ///
-    /// Call this repetitively to consume the input stream. Will return two numbers `(i, o)` where
-    /// `i` is the input progress, i.e. the number of bytes that were consumed from `input`, and
-    /// `o` is the output progress, i.e. the number of bytes written to `output`. The caller
-    /// must check if `input` has been entirely consumed. If not, the caller must make some room
-    /// to receive more decompressed data, and then present again remaining input data.
-    ///
-    /// Uses `seek_table` and `src_pos` to verify checksums of uncompressed frame data.
-    pub fn decompress_with_seek_table(
-        &mut self,
-        seek_table: &SeekTable,
-        src_pos: u64,
-        input: &[u8],
-        output: &mut [u8],
-    ) -> Result<(usize, usize)> {
-        self.decompress(input, output, |offset: usize, checksum: u32| {
-            let index = seek_table
-                // src_pos + offset will be the ending of the frame we just finished,
-                // which is also the start of the next frame. Subtract 1 to get the index
-                // of the right frame.
-                .frame_index_comp(src_pos + offset as u64 - 1);
-            // This gets only called if the seek table has checksums, we can expect every frame
-            // to have a checksum
-            let expected = seek_table
-                .frame_checksum(index)?
-                .expect("Frame has a checksum");
-
-            if checksum == expected {
-                Ok(())
-            } else {
-                Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected))
-            }
-        })
-    }
+    // /// Performs a step of a streaming decompression from `input` to `output`.
+    // ///
+    // /// Call this repetitively to consume the input stream. Will return two numbers `(i, o)` where
+    // /// `i` is the input progress, i.e. the number of bytes that were consumed from `input`, and
+    // /// `o` is the output progress, i.e. the number of bytes written to `output`. The caller
+    // /// must check if `input` has been entirely consumed. If not, the caller must make some room
+    // /// to receive more decompressed data, and then present again remaining input data.
+    // ///
+    // /// Uses `seek_table` and `src_pos` to verify checksums of uncompressed frame data.
+    // pub fn decompress_with_seek_table(
+    //     &mut self,
+    //     seek_table: &SeekTable,
+    //     src_pos: u64,
+    //     input: &[u8],
+    //     output: &mut [u8],
+    // ) -> Result<(usize, usize)> {
+    //     self.decompress(input, output, |offset: usize, checksum: u32| {
+    //         let index = seek_table
+    //             // src_pos + offset will be the ending of the frame we just finished,
+    //             // which is also the start of the next frame. Subtract 1 to get the index
+    //             // of the right frame.
+    //             .frame_index_comp(src_pos + offset as u64 - 1);
+    //         // This gets only called if the seek table has checksums, we can expect every frame
+    //         // to have a checksum
+    //         let expected = seek_table
+    //             .frame_checksum(index)?
+    //             .expect("Frame has a checksum");
+    //
+    //         if checksum == expected {
+    //             Ok(())
+    //         } else {
+    //             Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected))
+    //         }
+    //     })
+    // }
 
     /// Resets the current frame.
     ///
@@ -208,10 +184,6 @@ where
                 .expect("Resetting session never fails");
 
             self.dctx.ref_prefix(prefix)?;
-        }
-
-        if let Some(xxh) = &mut self.xxh64 {
-            xxh.reset(0);
         }
 
         Ok(())
@@ -273,9 +245,7 @@ where
                 self.in_buf_pos = 0;
             }
 
-            let (inp_prog, out_prog) = self.raw.decompress_with_seek_table(
-                &self.seek_table,
-                self.src_pos,
+            let (inp_prog, out_prog) = self.raw.decompress(
                 &self.in_buf[self.in_buf_pos..self.in_buf_limit],
                 &mut buf[output_progress..],
             )?;

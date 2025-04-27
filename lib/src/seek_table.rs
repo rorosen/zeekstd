@@ -1,11 +1,12 @@
 use zstd_safe::zstd_sys::ZSTD_ErrorCode;
 
 use crate::{
-    SEEK_TABLE_FOOTER_SIZE, SEEKABLE_MAGIC_NUMBER, SKIPPABLE_HEADER_SIZE, SKIPPABLE_MAGIC_NUMBER,
+    SEEKABLE_MAGIC_NUMBER, SEEKABLE_MAX_FRAMES,
     error::{Error, Result},
     seekable::Seekable,
 };
 
+// Reads 4 bytes from buf at offset into an u32
 macro_rules! read_le32 {
     ($buf:expr, $offset:expr) => {
         ($buf[$offset] as u32)
@@ -15,15 +16,78 @@ macro_rules! read_le32 {
     };
 }
 
+// Writes a 32 bit value in little endian to buf
+macro_rules! write_le32 {
+    ($buf:expr, $buf_pos:expr, $write_pos:expr, $value:expr, $offset:expr) => {
+        // Only write if this hasn't been written before
+        if $write_pos < $offset + 4 {
+            // Minimum of remaining buffer space and number of bytes we want to write
+            let len = usize::min($buf.len() - $buf_pos, $offset + 4 - $write_pos);
+            // The value offset, > 0 if we wrote the value partially in a previous run (because of
+            // little buffer space remaining)
+            let val_offset = $write_pos - $offset;
+            // Copy the importnat parts of value to buf
+            $buf[$buf_pos..$buf_pos + len]
+                .copy_from_slice(&$value.to_le_bytes()[val_offset..val_offset + len]);
+            $buf_pos += len;
+            $write_pos += len;
+            // Return if the buffer is full
+            if $buf_pos == $buf.len() {
+                return $buf_pos;
+            }
+        }
+    };
+}
+
+/// The size of each frame entry in the seek table.
+const SIZE_PER_FRAME: usize = 8;
+/// The size of the skippable frame header.
+const SKIPPABLE_HEADER_SIZE: usize = 8;
+/// The size of the legacy seekable footer a the end of the seek table.
+const LEGACY_FOOTER_SIZE: usize = 9;
+/// The size of the seekable descriptor.
+const DESCRIPTOR_SIZE: usize = 8;
+/// The skippable magic number of the skippable frame containing the seek table.
+const SKIPPABLE_MAGIC_NUMBER: u32 = zstd_safe::zstd_sys::ZSTD_MAGIC_SKIPPABLE_START | 0xE;
+
+struct Frame {
+    c_size: u32,
+    d_size: u32,
+}
+
 #[derive(Debug, Clone)]
 struct Entry {
     c_offset: u64,
     d_offset: u64,
-    checksum: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
 struct Entries(Vec<Entry>);
+
+impl Entries {
+    fn with_num_frames(num_frames: usize) -> Self {
+        let cap = core::mem::size_of::<Entry>() * num_frames;
+        Self(Vec::with_capacity(cap))
+    }
+
+    fn into_frames(self) -> Vec<Frame> {
+        let len = self.0.len() - 1;
+        let cap = core::mem::size_of::<Frame>() * len;
+        let mut frames = Vec::with_capacity(cap);
+
+        let mut idx = 0;
+        while idx < len {
+            let frame = Frame {
+                c_size: (self.0[idx + 1].c_offset - self.0[idx].c_offset) as u32,
+                d_size: (self.0[idx + 1].d_offset - self.0[idx].d_offset) as u32,
+            };
+            frames.push(frame);
+            idx += 1;
+        }
+
+        frames
+    }
+}
 
 impl core::ops::Index<u32> for Entries {
     type Output = Entry;
@@ -36,7 +100,7 @@ impl core::ops::Index<u32> for Entries {
 
 /// A helper struct that parses the bytes of a seek table.
 #[derive(Debug)]
-struct SeekTableParser {
+struct Parser {
     with_checksum: bool,
     num_frames: usize,
     size_per_frame: usize,
@@ -44,9 +108,41 @@ struct SeekTableParser {
     entries: Entries,
     c_offset: u64,
     d_offset: u64,
+    is_legacy: bool,
 }
 
-impl SeekTableParser {
+impl Parser {
+    fn from_seekable<S: Seekable>(src: &mut S) -> Result<Self> {
+        let footer = src.seek_table_footer()?;
+
+        if read_le32!(footer, 5) == SEEKABLE_MAGIC_NUMBER {
+            Self::from_legacy_footer(&footer)
+        } else if read_le32!(footer, 1) == SEEKABLE_MAGIC_NUMBER {
+            Ok(Self::from_small_footer(&footer[5..]))
+        } else {
+            Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown))
+        }
+    }
+
+    fn from_small_footer(buf: &[u8]) -> Self {
+        let num_frames = read_le32!(buf, 0)
+            .try_into()
+            .expect("Number of frames never exceeds u32");
+        let size_per_frame = 8;
+        let seek_table_size = num_frames * size_per_frame + SKIPPABLE_HEADER_SIZE + DESCRIPTOR_SIZE;
+
+        Self {
+            with_checksum: false,
+            num_frames,
+            size_per_frame,
+            seek_table_size,
+            entries: Entries::with_num_frames(num_frames),
+            c_offset: 0,
+            d_offset: 0,
+            is_legacy: false,
+        }
+    }
+
     /// Create a [`SeekTableParser`] from the footer of a seek table.
     ///
     /// The footer consists of the last 9 bytes of a seek table.
@@ -54,11 +150,7 @@ impl SeekTableParser {
     /// # Errors
     ///
     /// Fails if `buf` does not contain a valid seek table footer.
-    fn from_footer(buf: &[u8]) -> Result<Self> {
-        if read_le32!(buf, 5) != SEEKABLE_MAGIC_NUMBER {
-            return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown));
-        }
-
+    fn from_legacy_footer(buf: &[u8]) -> Result<Self> {
         // Check reserved bits are not set
         if ((buf[4] >> 2) & 0x1f) > 0 {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected));
@@ -69,17 +161,18 @@ impl SeekTableParser {
             .try_into()
             .expect("Number of frames never exceeds u32");
         let size_per_frame: usize = if with_checksum { 12 } else { 8 };
-        let table_size = num_frames * size_per_frame;
-        let seek_table_size = table_size + SEEK_TABLE_FOOTER_SIZE + SKIPPABLE_HEADER_SIZE;
+        let seek_table_size =
+            num_frames * size_per_frame + SKIPPABLE_HEADER_SIZE + LEGACY_FOOTER_SIZE;
 
         Ok(Self {
             with_checksum,
             num_frames,
             size_per_frame,
             seek_table_size,
-            entries: Entries(vec![]),
+            entries: Entries::with_num_frames(num_frames),
             c_offset: 0,
             d_offset: 0,
+            is_legacy: true,
         })
     }
 
@@ -91,7 +184,7 @@ impl SeekTableParser {
     ///
     /// Fails if `buf` does not start with the skippable magic number (`0x184D2A5E`) or does not
     /// specify the correct seek table size.
-    fn verify_header(&self, buf: &[u8]) -> Result<()> {
+    fn verify_legacy_header(&self, buf: &[u8]) -> Result<()> {
         if read_le32!(buf, 0) != SKIPPABLE_MAGIC_NUMBER {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown));
         }
@@ -121,16 +214,9 @@ impl SeekTableParser {
                 return pos;
             }
 
-            let checksum = if self.with_checksum {
-                Some(read_le32!(buf, pos + 8))
-            } else {
-                None
-            };
-
             let entry = Entry {
                 c_offset: *c_offset,
                 d_offset: *d_offset,
-                checksum,
             };
             entries.0.push(entry);
             // Casting u32 to u64 is fine
@@ -140,26 +226,34 @@ impl SeekTableParser {
         }
 
         if entries.0.len() == self.num_frames {
-            // Add an additional entry that marks the end of the last frame
+            // Add a final entry that marks the end of the last frame
             let entry = Entry {
                 c_offset: *c_offset,
                 d_offset: *d_offset,
-                checksum: None,
             };
             entries.0.push(entry);
         }
 
         pos
     }
+
+    fn verify(&self) -> Result<()> {
+        if self.entries.0.len() == self.num_frames + 1 {
+            return Ok(());
+        }
+
+        Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected))
+    }
+
+    fn is_legacy(&self) -> bool {
+        self.is_legacy
+    }
 }
 
-impl From<SeekTableParser> for SeekTable {
-    fn from(value: SeekTableParser) -> Self {
+impl From<Parser> for SeekTable {
+    fn from(value: Parser) -> Self {
         SeekTable {
             entries: value.entries,
-            with_checksum: value.with_checksum,
-            // Frame number always fits in u32
-            num_frames: value.num_frames as u32,
         }
     }
 }
@@ -183,11 +277,32 @@ impl From<SeekTableParser> for SeekTable {
 #[derive(Debug, Clone)]
 pub struct SeekTable {
     entries: Entries,
-    with_checksum: bool,
-    num_frames: u32,
 }
 
 impl SeekTable {
+    pub fn new() -> Self {
+        let entries = Entries(vec![Entry {
+            c_offset: 0,
+            d_offset: 0,
+        }]);
+
+        Self { entries }
+    }
+
+    pub fn log_frame(&mut self, c_size: u32, d_size: u32) -> Result<()> {
+        if self.num_frames() >= SEEKABLE_MAX_FRAMES {
+            return Err(Error::frame_index_too_large());
+        }
+
+        let last = &self.entries[self.num_frames()];
+        self.entries.0.push(Entry {
+            c_offset: last.c_offset + c_size as u64,
+            d_offset: last.d_offset + d_size as u64,
+        });
+
+        Ok(())
+    }
+
     /// Creates a new `SeekTable` from a seekable archive.
     ///
     /// # Errors
@@ -197,14 +312,14 @@ impl SeekTable {
     where
         S: Seekable,
     {
-        let footer = src.seek_table_footer()?;
-        let mut parser = SeekTableParser::from_footer(&footer)?;
+        let mut parser = Parser::from_seekable(src)?;
         src.seek_to_seek_table_start(parser.seek_table_size)?;
-        // No need to read the footer again
-        let cap = 8192.min(parser.seek_table_size - SEEK_TABLE_FOOTER_SIZE);
+        let cap = 8192.min(parser.seek_table_size);
         let mut buf = vec![0u8; cap];
         src.read(&mut buf)?;
-        parser.verify_header(&buf[..8])?;
+        if parser.is_legacy {
+            parser.verify_legacy_header(&buf[..8])?;
+        }
         buf.drain(..8);
 
         loop {
@@ -215,17 +330,18 @@ impl SeekTable {
                 break;
             };
         }
+        parser.verify()?;
 
         Ok(parser.into())
     }
 
     fn frame_index_at(&self, offset: u64, callback: impl Fn(u32) -> u64) -> u32 {
-        if offset >= callback(self.num_frames) {
-            return self.num_frames - 1;
+        if offset >= callback(self.num_frames()) {
+            return self.num_frames() - 1;
         }
 
         let mut low = 0;
-        let mut high = self.num_frames;
+        let mut high = self.num_frames();
 
         while low + 1 < high {
             let mid = low.midpoint(high);
@@ -241,27 +357,7 @@ impl SeekTable {
 
     /// Gets the number of frames in the `SeekTable`.
     pub fn num_frames(&self) -> u32 {
-        self.num_frames
-    }
-
-    /// Whether the frames do have checksums.
-    pub fn with_checksum(&self) -> bool {
-        self.with_checksum
-    }
-
-    /// Gets the checksum of the frame at `index`.
-    ///
-    /// Returns `None` if the frame has no checksum.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the frame index is out of range.
-    pub fn frame_checksum(&self, index: u32) -> Result<Option<u32>> {
-        if index >= self.num_frames {
-            return Err(Error::frame_index_too_large());
-        }
-
-        Ok(self.entries[index].checksum)
+        (self.entries.0.len() - 1) as u32
     }
 
     /// Gets the frame index at the given compressed offset.
@@ -280,7 +376,7 @@ impl SeekTable {
     ///
     /// Fails if the frame index is out of range.
     pub fn frame_start_comp(&self, index: u32) -> Result<u64> {
-        if index >= self.num_frames {
+        if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
         }
 
@@ -293,7 +389,7 @@ impl SeekTable {
     ///
     /// Fails if the frame index is out of range.
     pub fn frame_start_decomp(&self, index: u32) -> Result<u64> {
-        if index >= self.num_frames {
+        if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
         }
 
@@ -306,7 +402,7 @@ impl SeekTable {
     ///
     /// Fails if the frame index is out of range.
     pub fn frame_end_comp(&self, index: u32) -> Result<u64> {
-        if index >= self.num_frames {
+        if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
         }
 
@@ -319,7 +415,7 @@ impl SeekTable {
     ///
     /// Fails if the frame index is out of range.
     pub fn frame_end_decomp(&self, index: u32) -> Result<u64> {
-        if index >= self.num_frames {
+        if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
         }
 
@@ -332,7 +428,7 @@ impl SeekTable {
     ///
     /// Fails if the frame index is out of range.
     pub fn frame_size_comp(&self, index: u32) -> Result<u64> {
-        if index >= self.num_frames {
+        if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
         }
 
@@ -346,7 +442,7 @@ impl SeekTable {
     ///
     /// Fails if the frame index is out of range.
     pub fn frame_size_decomp(&self, index: u32) -> Result<u64> {
-        if index >= self.num_frames {
+        if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
         }
 
@@ -356,9 +452,9 @@ impl SeekTable {
 
     /// Gets the maximum compressed frame size.
     pub fn max_frame_size_comp(&self) -> u64 {
-        (0..self.num_frames)
+        (0..self.num_frames())
             .map(|i| {
-                self.frame_size_decomp(i)
+                self.frame_size_comp(i)
                     .expect("Frame index is never out of range")
             })
             .max()
@@ -367,12 +463,231 @@ impl SeekTable {
 
     /// Gets the maximum decompressed frame size.
     pub fn max_frame_size_decomp(&self) -> u64 {
-        (0..self.num_frames)
+        (0..self.num_frames())
             .map(|i| {
                 self.frame_size_decomp(i)
                     .expect("Frame index is never out of range")
             })
             .max()
             .unwrap_or(0)
+    }
+
+    pub fn into_legacy_serializer(self) -> LegacySerializer {
+        LegacySerializer {
+            frames: self.entries.into_frames(),
+            frame_index: 0,
+            write_pos: 0,
+        }
+    }
+}
+
+// TODO!
+// struct Serializer {
+//     write_pos: usize,
+// }
+//
+// impl Serializer {
+//
+// }
+
+pub struct HeadWriter {
+    frames: Vec<Frame>,
+    frame_index: usize,
+    write_pos: usize,
+}
+
+impl HeadWriter {
+    pub fn write_into(&mut self, buf: &mut [u8]) -> usize {
+        let mut buf_pos = 0;
+
+        // The total size of the seek table frame, not including the SKIPPABLE_MAGIC_NUMBER and
+        // seek_table_size. Should always fit in u32.
+        let seek_table_size = (SIZE_PER_FRAME * self.frames.len()) as u32;
+        // Serialize skippable header
+        write_le32!(buf, buf_pos, self.write_pos, SKIPPABLE_MAGIC_NUMBER, 0);
+        write_le32!(buf, buf_pos, self.write_pos, seek_table_size, 4);
+
+        // Write seekable header
+        write_le32!(buf, buf_pos, self.write_pos, SEEKABLE_MAGIC_NUMBER, 8);
+        write_le32!(
+            buf,
+            buf_pos,
+            self.write_pos,
+            // Always fit in u32 because cannot be greater than SEEKABLE_MAX_FRAMES
+            self.frames.len() as u32,
+            12
+        );
+
+        // Serialize frames
+        while self.frame_index < self.frames.len() {
+            let frame = &self.frames[self.frame_index];
+            let offset = SKIPPABLE_HEADER_SIZE + SIZE_PER_FRAME * self.frame_index;
+            write_le32!(buf, buf_pos, self.write_pos, frame.c_size, offset);
+            write_le32!(buf, buf_pos, self.write_pos, frame.d_size, offset + 4);
+            self.frame_index += 1;
+        }
+
+        buf_pos
+    }
+
+    pub fn reset(&mut self) {
+        self.write_pos = 0;
+        self.frame_index = 0;
+    }
+}
+
+pub struct FootWriter {
+    frames: Vec<Frame>,
+    frame_index: usize,
+    write_pos: usize,
+}
+
+impl FootWriter {
+    pub fn write_into(&mut self, buf: &mut [u8]) -> usize {
+        let mut buf_pos = 0;
+
+        // The total size of the seek table frame, not including the SKIPPABLE_MAGIC_NUMBER and
+        // seek_table_size. Should always fit in u32.
+        let seek_table_size = (SIZE_PER_FRAME * self.frames.len()) as u32;
+        // Serialize header
+        write_le32!(buf, buf_pos, self.write_pos, SKIPPABLE_MAGIC_NUMBER, 0);
+        write_le32!(buf, buf_pos, self.write_pos, seek_table_size, 4);
+
+        // Serialize frames
+        while self.frame_index < self.frames.len() {
+            let frame = &self.frames[self.frame_index];
+            let offset = SKIPPABLE_HEADER_SIZE + SIZE_PER_FRAME * self.frame_index;
+            write_le32!(buf, buf_pos, self.write_pos, frame.c_size, offset);
+            write_le32!(buf, buf_pos, self.write_pos, frame.d_size, offset + 4);
+            self.frame_index += 1;
+        }
+
+        let offset = SKIPPABLE_HEADER_SIZE + SIZE_PER_FRAME * self.frames.len();
+        // Serialize footer
+        write_le32!(buf, buf_pos, self.write_pos, SEEKABLE_MAGIC_NUMBER, offset);
+        write_le32!(
+            buf,
+            buf_pos,
+            self.write_pos,
+            // Always fit in u32 because cannot be greater than SEEKABLE_MAX_FRAMES
+            self.frames.len() as u32,
+            offset + 4
+        );
+
+        buf_pos
+    }
+
+    pub fn reset(&mut self) {
+        self.write_pos = 0;
+        self.frame_index = 0;
+    }
+}
+
+pub struct LegacySerializer {
+    frames: Vec<Frame>,
+    frame_index: usize,
+    write_pos: usize,
+}
+
+impl LegacySerializer {
+    pub fn write_into(&mut self, buf: &mut [u8]) -> usize {
+        let mut buf_pos = 0;
+
+        // The total size of the seek table frame, not including the SKIPPABLE_MAGIC_NUMBER and
+        // seek_table_size. Should always fit in u32.
+        let seek_table_size = (SIZE_PER_FRAME * self.frames.len() + LEGACY_FOOTER_SIZE) as u32;
+        // Serialize header
+        write_le32!(buf, buf_pos, self.write_pos, SKIPPABLE_MAGIC_NUMBER, 0);
+        write_le32!(buf, buf_pos, self.write_pos, seek_table_size, 4);
+
+        // Serialize frames
+        while self.frame_index < self.frames.len() {
+            let frame = &self.frames[self.frame_index];
+            let offset = SKIPPABLE_HEADER_SIZE + SIZE_PER_FRAME * self.frame_index;
+            write_le32!(buf, buf_pos, self.write_pos, frame.c_size, offset);
+            write_le32!(buf, buf_pos, self.write_pos, frame.d_size, offset + 4);
+            self.frame_index += 1;
+        }
+
+        let offset = SKIPPABLE_HEADER_SIZE + SIZE_PER_FRAME * self.frames.len();
+        // Serialize footer
+        write_le32!(
+            buf,
+            buf_pos,
+            self.write_pos,
+            // Always fit in u32 because cannot be greater than SEEKABLE_MAX_FRAMES
+            self.frames.len() as u32,
+            offset
+        );
+        // Write the "seek table descriptor"
+        if self.write_pos < offset + 5 {
+            buf[buf_pos] = 0;
+            buf_pos += 1;
+            self.write_pos += 1;
+        }
+        write_le32!(
+            buf,
+            buf_pos,
+            self.write_pos,
+            SEEKABLE_MAGIC_NUMBER,
+            offset + 5
+        );
+
+        buf_pos
+    }
+
+    pub fn reset(&mut self) {
+        self.write_pos = 0;
+        self.frame_index = 0;
+    }
+}
+
+impl std::io::Read for LegacySerializer {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(self.write_into(buf))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Cursor};
+
+    use super::*;
+
+    #[test]
+    fn seek_table_cycle() -> Result<()> {
+        const NUM_FRAMES: u32 = 4096;
+        let mut st = SeekTable::new();
+
+        for i in 1..=NUM_FRAMES {
+            st.log_frame(i * 5, i * 10)?;
+        }
+
+        let mut seek_table = Cursor::new(Vec::with_capacity(
+            // The size of the seek table
+            12 * NUM_FRAMES as usize + SKIPPABLE_HEADER_SIZE + 9,
+        ));
+        let mut ser = st.into_legacy_serializer();
+        io::copy(&mut ser, &mut seek_table)?;
+
+        let st = SeekTable::from_seekable(&mut seek_table)?;
+        assert_eq!(st.num_frames(), NUM_FRAMES);
+
+        let mut c_offset = 0;
+        let mut d_offset = 0;
+        for i in 1..=NUM_FRAMES {
+            assert_eq!(st.frame_end_comp(i - 1)?, c_offset + i as u64 * 5);
+            assert_eq!(st.frame_size_comp(i - 1)?, i as u64 * 5);
+            assert_eq!(st.frame_start_comp(i - 1)?, c_offset);
+            assert_eq!(st.frame_end_decomp(i - 1)?, d_offset + i as u64 * 10);
+            assert_eq!(st.frame_size_decomp(i - 1)?, i as u64 * 10);
+            assert_eq!(st.frame_start_decomp(i - 1)?, d_offset);
+            assert_eq!(st.frame_index_comp(c_offset), i - 1);
+            assert_eq!(st.frame_index_decomp(d_offset), i - 1);
+            c_offset += i as u64 * 5;
+            d_offset += i as u64 * 10;
+        }
+
+        Ok(())
     }
 }

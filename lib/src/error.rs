@@ -69,7 +69,6 @@ impl Error {
     }
 
     pub(crate) fn zstd(code: ZSTD_ErrorCode) -> Self {
-        // TODO: Using usize for this doesn't seem right
         let wrapped = 0_usize.wrapping_sub(code as usize);
         Self {
             kind: Kind::Zstd(wrapped),

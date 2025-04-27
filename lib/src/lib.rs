@@ -62,29 +62,23 @@
 mod decode;
 mod encode;
 mod error;
-mod frame_log;
+// mod frame_log;
 mod seek_table;
 mod seekable;
 
 pub use decode::{DecodeOptions, Decoder, RawDecoder};
 pub use encode::{EncodeOptions, Encoder, FrameSizePolicy, RawEncoder};
 pub use error::{Error, Result};
-pub use frame_log::FrameLog;
+// pub use frame_log::FrameLog;
 pub use seek_table::SeekTable;
 pub use seekable::Seekable;
 // Re-export as it's part of the API.
 pub use zstd_safe::CompressionLevel;
 
-/// The skippable magic number of a skippable frame containing the seek table.
-pub const SKIPPABLE_MAGIC_NUMBER: u32 = zstd_safe::zstd_sys::ZSTD_MAGIC_SKIPPABLE_START | 0xE;
 /// The magic number placed at the end of the seek table.
 pub const SEEKABLE_MAGIC_NUMBER: u32 = 0x8F92EAB1;
-/// The size of skippable frame header.
-pub const SKIPPABLE_HEADER_SIZE: usize = 8;
-/// The size of the seekable footer a the end of the seek table.
-pub const SEEK_TABLE_FOOTER_SIZE: usize = 9;
 /// The maximum number of frames in a seekable archive.
-pub const SEEKABLE_MAX_FRAMES: usize = 0x8000000;
+pub const SEEKABLE_MAX_FRAMES: u32 = 0x8000000;
 /// The maximum size of the uncompressed data of a frame.
 pub const SEEKABLE_MAX_FRAME_SIZE: usize = 0x40000000;
 
@@ -103,7 +97,6 @@ mod tests {
         decode::{DecodeOptions, Decoder},
         encode::{EncodeOptions, Encoder, FrameSizePolicy},
         error::Result,
-        frame_log::FrameLog,
         seek_table::SeekTable,
     };
 
@@ -133,43 +126,6 @@ mod tests {
 
         input.set_position(0);
         input
-    }
-
-    #[test]
-    fn seek_table_from_frame_log() -> Result<()> {
-        const NUM_FRAMES: u32 = 4096;
-        let mut fl = FrameLog::new(true);
-
-        for i in 1..=NUM_FRAMES {
-            fl.log_frame(i * 5, i * 10, Some(i))?;
-        }
-
-        let mut seek_table = Cursor::new(Vec::with_capacity(
-            // The size of the seek table
-            12 * NUM_FRAMES as usize + SKIPPABLE_HEADER_SIZE + SEEK_TABLE_FOOTER_SIZE,
-        ));
-        io::copy(&mut fl, &mut seek_table)?;
-
-        let st = SeekTable::from_seekable(&mut seek_table)?;
-        assert_eq!(st.num_frames(), NUM_FRAMES);
-
-        let mut c_offset = 0;
-        let mut d_offset = 0;
-        for i in 1..=NUM_FRAMES {
-            assert_eq!(st.frame_checksum(i - 1)?, Some(i));
-            assert_eq!(st.frame_end_comp(i - 1)?, c_offset + i as u64 * 5);
-            assert_eq!(st.frame_size_comp(i - 1)?, i as u64 * 5);
-            assert_eq!(st.frame_start_comp(i - 1)?, c_offset);
-            assert_eq!(st.frame_end_decomp(i - 1)?, d_offset + i as u64 * 10);
-            assert_eq!(st.frame_size_decomp(i - 1)?, i as u64 * 10);
-            assert_eq!(st.frame_start_decomp(i - 1)?, d_offset);
-            assert_eq!(st.frame_index_comp(c_offset), i - 1);
-            assert_eq!(st.frame_index_decomp(d_offset), i - 1);
-            c_offset += i as u64 * 5;
-            d_offset += i as u64 * 10;
-        }
-
-        Ok(())
     }
 
     #[test]

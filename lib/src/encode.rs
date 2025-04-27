@@ -1,10 +1,8 @@
-use xxhash_rust::xxh64::Xxh64;
 use zstd_safe::{CCtx, InBuffer, OutBuffer, ResetDirective, WriteBuf, zstd_sys::ZSTD_EndDirective};
 
 use crate::{
-    SEEKABLE_MAX_FRAME_SIZE,
+    SEEKABLE_MAX_FRAME_SIZE, SeekTable,
     error::{Error, Result},
-    frame_log::FrameLog,
 };
 
 // Constant value always can be casted
@@ -134,8 +132,7 @@ where
             frame_c_size: 0,
             frame_d_size: 0,
             prefix: self.prefix,
-            frame_log: FrameLog::new(self.with_checksum),
-            xxh64: self.with_checksum.then(|| Xxh64::new(0)),
+            seek_table: SeekTable::new(),
         })
     }
 
@@ -166,8 +163,7 @@ pub struct RawEncoder<'c, 'p> {
     frame_c_size: u32,
     frame_d_size: u32,
     prefix: Option<&'p [u8]>,
-    frame_log: FrameLog,
-    xxh64: Option<Xxh64>,
+    seek_table: SeekTable,
 }
 
 impl RawEncoder<'_, '_> {
@@ -222,9 +218,6 @@ where
         // Casting these is always fine
         self.frame_c_size += out_buf.pos() as u32;
         self.frame_d_size += in_buf.pos() as u32;
-        if let Some(xxh) = &mut self.xxh64 {
-            xxh.update(&input[..in_buf.pos()]);
-        }
 
         let mut out_progress = out_buf.pos();
         if self.is_frame_complete() {
@@ -268,36 +261,36 @@ where
             }
         }
 
-        let checksum = self
-            .xxh64
-            .as_ref()
-            // Only the least significant 32 bits of the hash are needed, so casting to u32 is ok.
-            .map(|x| x.digest() as u32);
-        self.frame_log
-            .log_frame(self.frame_c_size, self.frame_d_size, checksum)?;
+        self.seek_table
+            .log_frame(self.frame_c_size, self.frame_d_size)?;
         self.reset_frame()?;
 
         // If we get here the frame is complete
         Ok((out_buf.pos(), 0))
     }
 
-    /// Writes the seek table to `output`.
-    ///
-    /// Call this repetitively to write the seek table to `output`. Returns the number of bytes
-    /// written. Should be called until `0` is returned.
-    pub fn write_seek_table_into(&mut self, output: &mut [u8]) -> usize {
-        let mut written = 0;
-        while written < output.capacity() {
-            let n = self.frame_log.write_seek_table_into(&mut output[written..]);
-
-            if n == 0 {
-                break;
-            }
-            written += n;
-        }
-
-        written
+    pub fn into_seek_table(self) -> SeekTable {
+        self.seek_table
     }
+    // /// Writes the seek table to `output`.
+    // ///
+    // /// Call this repetitively to write the seek table to `output`. Returns the number of bytes
+    // /// written. Should be called until `0` is returned.
+    // pub fn write_seek_table_into(&mut self, output: &mut [u8]) -> usize {
+    //     let mut written = 0;
+    //     while written < output.capacity() {
+    //         let n = self
+    //             .seek_table
+    //             .write_seek_table_into(&mut output[written..]);
+    //
+    //         if n == 0 {
+    //             break;
+    //         }
+    //         written += n;
+    //     }
+    //
+    //     written
+    // }
 
     /// Removes the referenced prefix, if any.
     ///
@@ -332,10 +325,6 @@ where
         self.cctx
             .reset(ResetDirective::SessionOnly)
             .expect("Resetting session never fails");
-
-        if let Some(xxh) = &mut self.xxh64 {
-            xxh.reset(0);
-        }
 
         if let Some(prefix) = self.prefix {
             self.cctx.ref_prefix(prefix)?;
@@ -446,10 +435,9 @@ where
             }
         }
 
+        let mut st_writer = self.raw.into_seek_table().into_legacy_serializer();
         loop {
-            let n = self
-                .raw
-                .write_seek_table_into(&mut self.out_buf[self.out_buf_pos..]);
+            let n = st_writer.write_into(&mut self.out_buf[self.out_buf_pos..]);
             if n == 0 {
                 self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
                 self.writer.flush()?;
@@ -457,7 +445,11 @@ where
             }
 
             self.out_buf_pos += n;
-            self.flush_out_buf()?;
+            if self.out_buf_pos == self.out_buf.len() {
+                self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
+                self.written_compressed += self.out_buf_pos as u64;
+                self.out_buf_pos = 0;
+            }
             progress += n;
         }
     }

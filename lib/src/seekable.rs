@@ -1,7 +1,4 @@
-use crate::{
-    SEEK_TABLE_FOOTER_SIZE,
-    error::{Error, Result},
-};
+use crate::error::{Error, Result};
 
 /// Represents a seekable source.
 pub trait Seekable {
@@ -48,8 +45,8 @@ impl Seekable for BytesWrapper<'_> {
     }
 
     fn seek_table_footer(&mut self) -> Result<[u8; 9]> {
-        let mut buf = [0u8; SEEK_TABLE_FOOTER_SIZE];
-        buf.copy_from_slice(&self.src[self.src.len() - SEEK_TABLE_FOOTER_SIZE..]);
+        let mut buf = [0u8; 9];
+        buf.copy_from_slice(&self.src[self.src.len() - 9..]);
 
         Ok(buf)
     }
@@ -79,9 +76,8 @@ where
     }
 
     fn seek_table_footer(&mut self) -> Result<[u8; 9]> {
-        // SEEK_TABLE_FOOTER_SIZE (9) can always be casted to i64
-        self.seek(std::io::SeekFrom::End(-(SEEK_TABLE_FOOTER_SIZE as i64)))?;
-        let mut buf = [0u8; SEEK_TABLE_FOOTER_SIZE];
+        self.seek(std::io::SeekFrom::End(-9))?;
+        let mut buf = [0u8; 9];
         self.read_exact(&mut buf)?;
 
         Ok(buf)
