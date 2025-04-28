@@ -62,16 +62,15 @@
 mod decode;
 mod encode;
 mod error;
-// mod frame_log;
 mod seek_table;
 mod seekable;
 
-pub use decode::{DecodeOptions, Decoder, RawDecoder};
+pub use decode::{DecodeOptions, Decoder};
 pub use encode::{EncodeOptions, Encoder, FrameSizePolicy, RawEncoder};
 pub use error::{Error, Result};
 // pub use frame_log::FrameLog;
 pub use seek_table::SeekTable;
-pub use seekable::Seekable;
+pub use seekable::{BytesWrapper, Seekable};
 // Re-export as it's part of the API.
 pub use zstd_safe::CompressionLevel;
 
@@ -79,7 +78,9 @@ pub use zstd_safe::CompressionLevel;
 pub const SEEKABLE_MAGIC_NUMBER: u32 = 0x8F92EAB1;
 /// The maximum number of frames in a seekable archive.
 pub const SEEKABLE_MAX_FRAMES: u32 = 0x8000000;
-/// The maximum size of the uncompressed data of a frame.
+/// The size of the seek table integrity block.
+pub const SEEK_TABLE_INTEGRITY_SIZE: usize = 9;
+/// The maximum size of the uncompressed data in a frame.
 pub const SEEKABLE_MAX_FRAME_SIZE: usize = 0x40000000;
 
 #[doc = include_str!("../../README.md")]
@@ -88,17 +89,11 @@ pub struct ReadmeDoctests;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::{self, BufRead, Cursor, Write};
 
-    use zstd_safe::{CCtx, CParameter};
+    use zstd_safe::{CCtx, CParameter, DCtx};
 
-    use crate::{
-        decode::{DecodeOptions, Decoder},
-        encode::{EncodeOptions, Encoder, FrameSizePolicy},
-        error::Result,
-        seek_table::SeekTable,
-    };
+    use super::*;
 
     const LINE_LEN: u32 = 23;
     const LINES_IN_DOC: u32 = 200_384;
@@ -132,13 +127,17 @@ mod tests {
     fn seekable_cycle() -> Result<()> {
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
-        let mut encoder = Encoder::new(&mut seekable)?;
+        // let mut seekable = std::fs::File::create("/tmp/num.zst")?;
+        // let mut cctx = CCtx::create();
+        // cctx.set_parameter(CParameter::ChecksumFlag(true))?;
+        let mut encoder = Encoder::new(&mut seekable);
+        // let mut encoder = Encoder::with_opts(&mut seekable, EncodeOptions::with_cctx(cctx));
 
         // Compress the input
         io::copy(&mut input, &mut encoder)?;
         encoder.finish()?;
 
-        let mut decoder = DecodeOptions::new().into_decoder(seekable)?;
+        let mut decoder = DecodeOptions::new(seekable).into_decoder()?;
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
         // Decompress the complete seekable
         io::copy(&mut decoder, &mut output)?;
@@ -163,14 +162,13 @@ mod tests {
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = EncodeOptions::new()
             .frame_size_policy(FrameSizePolicy::Uncompressed(LINE_LEN * LINES_IN_FRAME))
-            .into_encoder(&mut seekable)
-            .unwrap();
+            .into_encoder(&mut seekable);
 
         // Compress the input
         io::copy(&mut input, &mut encoder).unwrap();
         encoder.finish().unwrap();
 
-        let mut decoder = Decoder::from_seekable(seekable).unwrap();
+        let mut decoder = Decoder::new(seekable).unwrap();
 
         // Add one for the last frame
         let num_frames = LINES_IN_DOC / LINES_IN_FRAME + 1;
@@ -189,7 +187,7 @@ mod tests {
         assert_eq!(input.get_ref(), output.get_ref());
 
         // Decompress until frame 6 (inclusive)
-        decoder.set_lower_frame(0).unwrap();
+        decoder.set_lower_frame(0);
         decoder.set_upper_frame(6);
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_FRAME) as usize * 7));
         io::copy(&mut decoder, &mut output).unwrap();
@@ -202,7 +200,7 @@ mod tests {
         assert_eq!(num_line, 7 * LINES_IN_FRAME);
 
         // Decompress the last 13 frames
-        decoder.set_lower_frame(num_frames - 14).unwrap();
+        decoder.set_lower_frame(num_frames - 14);
         decoder.set_upper_frame(num_frames - 1);
         let mut output = Cursor::new(Vec::with_capacity(
             (LINE_LEN * LINES_IN_FRAME) as usize * 13,
@@ -217,7 +215,7 @@ mod tests {
         assert_eq!(num_line, LINES_IN_DOC);
 
         // Start frame greater end frame, expect zero bytes read
-        decoder.set_lower_frame(9).unwrap();
+        decoder.set_lower_frame(9);
         decoder.set_upper_frame(8);
         let mut output = Cursor::new(vec![]);
         let n = io::copy(&mut decoder, &mut output).unwrap();
@@ -226,12 +224,12 @@ mod tests {
         assert_eq!(0, output.lines().collect::<Vec<_>>().len());
 
         // Start frame index too large
-        decoder.set_lower_frame(num_frames).unwrap();
+        decoder.set_lower_frame(num_frames);
         let mut output = Cursor::new(vec![]);
         assert!(io::copy(&mut decoder, &mut output).is_err());
 
         // End frame index too large
-        decoder.set_lower_frame(0).unwrap();
+        decoder.set_lower_frame(0);
         decoder.set_upper_frame(num_frames);
         let mut output = Cursor::new(vec![]);
         assert!(io::copy(&mut decoder, &mut output).is_err());
@@ -252,31 +250,52 @@ mod tests {
     }
 
     #[test]
-    fn seekable_diff_cycle() -> Result<()> {
+    fn seekable_patch_cycle() -> Result<()> {
         let old = generate_input(LINES_IN_DOC - 1);
-        let mut new = generate_input(LINES_IN_DOC);
+        let new = generate_input(LINES_IN_DOC);
         let mut patch = Cursor::new(vec![]);
 
         let window_log = highbit_64(old.get_ref().len() + 1024);
         let mut cctx = CCtx::create();
         cctx.set_parameter(CParameter::WindowLog(window_log))?;
         cctx.set_parameter(CParameter::EnableLongDistanceMatching(true))?;
-        let mut encoder = EncodeOptions::new()
-            .cctx(cctx)
-            .prefix(old.get_ref())
-            .into_encoder(&mut patch)?;
+        let mut encoder = EncodeOptions::new().cctx(cctx).into_encoder(&mut patch);
 
         // Create a binary diff
-        io::copy(&mut new, &mut encoder)?;
+        let mut input_progress = 0;
+        loop {
+            let n = encoder
+                .compress_with_prefix(&new.get_ref()[input_progress..], Some(old.get_ref()))
+                .unwrap();
+            if n == 0 {
+                break;
+            }
+            input_progress += n;
+        }
         encoder.finish()?;
 
-        let mut decoder = DecodeOptions::new()
-            .prefix(old.get_ref())
-            .into_decoder(patch)?;
+        let mut decoder = Decoder::new(patch).unwrap();
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
-        io::copy(&mut decoder, &mut output)?;
-        output.set_position(0);
+        let mut buf = vec![0; DCtx::out_size()];
+        let mut buf_pos = 0;
 
+        // Apply a binary diff
+        loop {
+            let n = decoder
+                .decompress_with_prefix(&mut buf[buf_pos..], Some(old.get_ref()))
+                .unwrap();
+            if n == 0 {
+                break;
+            }
+            buf_pos += n;
+            if buf_pos == buf.len() {
+                output.write_all(&buf).unwrap();
+                buf_pos = 0;
+            }
+        }
+        output.write_all(&buf[..buf_pos]).unwrap();
+
+        output.set_position(0);
         let mut num_line = 0;
         for line in output.clone().lines().map(|l| l.unwrap()) {
             assert_eq!(line, format!("Hello from line {:06}", num_line));

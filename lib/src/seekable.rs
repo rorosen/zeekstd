@@ -1,4 +1,7 @@
-use crate::error::{Error, Result};
+use crate::{
+    SEEK_TABLE_INTEGRITY_SIZE,
+    error::{Error, Result},
+};
 
 /// Represents a seekable source.
 pub trait Seekable {
@@ -6,13 +9,15 @@ pub trait Seekable {
     fn set_offset(&mut self, offset: u64) -> Result<()>;
     /// Pull some bytes from this source into the specified buffer, returning how many bytes were read.
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
-    /// Returns the last 9 bytes, i.e. the seek table footer, of this seekable.
-    fn seek_table_footer(&mut self) -> Result<[u8; 9]>;
+    /// Returns the footer of this seekable.
+    ///
+    /// In most cases, the footer contains the integrity field of the seek table.
+    fn seek_table_footer(&mut self) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]>;
     /// Seeks to the start of the seek table.
     fn seek_to_seek_table_start(&mut self, seek_table_size: usize) -> Result<()>;
 }
 
-/// A wrapper around a bytes slice.
+/// A seekable wrapper around a byte slice.
 pub struct BytesWrapper<'a> {
     src: &'a [u8],
     pos: usize,
@@ -44,9 +49,9 @@ impl Seekable for BytesWrapper<'_> {
         Ok(limit)
     }
 
-    fn seek_table_footer(&mut self) -> Result<[u8; 9]> {
-        let mut buf = [0u8; 9];
-        buf.copy_from_slice(&self.src[self.src.len() - 9..]);
+    fn seek_table_footer(&mut self) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]> {
+        let mut buf = [0u8; SEEK_TABLE_INTEGRITY_SIZE];
+        buf.copy_from_slice(&self.src[self.src.len() - SEEK_TABLE_INTEGRITY_SIZE..]);
 
         Ok(buf)
     }
@@ -75,9 +80,9 @@ where
         Ok(self.read(buf)?)
     }
 
-    fn seek_table_footer(&mut self) -> Result<[u8; 9]> {
-        self.seek(std::io::SeekFrom::End(-9))?;
-        let mut buf = [0u8; 9];
+    fn seek_table_footer(&mut self) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]> {
+        self.seek(std::io::SeekFrom::End(-(SEEK_TABLE_INTEGRITY_SIZE as i64)))?;
+        let mut buf = [0u8; SEEK_TABLE_INTEGRITY_SIZE];
         self.read_exact(&mut buf)?;
 
         Ok(buf)

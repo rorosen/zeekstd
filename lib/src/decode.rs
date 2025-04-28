@@ -1,198 +1,67 @@
 use core::ops::Deref;
 
-use zstd_safe::{DCtx, InBuffer, OutBuffer, ResetDirective, zstd_sys::ZSTD_ErrorCode};
+use zstd_safe::{DCtx, InBuffer, OutBuffer, ResetDirective};
 
-use crate::{
-    error::{Error, Result},
-    seek_table::SeekTable,
-    seekable::{BytesWrapper, Seekable},
-};
+use crate::{error::Result, seek_table::SeekTable, seekable::Seekable};
 
-/// Options that configure how data is decompressed.
-#[derive(Default)]
-pub struct DecodeOptions<'d, 'p> {
-    dctx: Option<DCtx<'d>>,
-    prefix: Option<&'p [u8]>,
+pub struct DecodeOptions<'a, S> {
+    dctx: DCtx<'a>,
+    src: S,
+    seek_table: Option<SeekTable>,
+    lower_frame: Option<u32>,
+    upper_frame: Option<u32>,
 }
 
-impl<'d, 'p> DecodeOptions<'d, 'p> {
-    /// Creates a set of options with default initial values.
-    pub fn new() -> Self {
-        Self::default()
+impl<'a, S> DecodeOptions<'a, S> {
+    pub fn new(src: S) -> Self {
+        Self::with_dctx(src, DCtx::create())
     }
 
-    /// Sets a [`DCtx`].
-    pub fn dctx(mut self, dctx: DCtx<'d>) -> Self {
-        self.dctx = Some(dctx);
-        self
+    pub fn try_new(src: S) -> Option<Self> {
+        let dctx = DCtx::try_create()?;
+        Some(Self::with_dctx(src, dctx))
     }
 
-    /// References a prefix that gets re-applied to every frame.
-    ///
-    /// This is the reverse operation of setting a prefix during compression and must be the same
-    /// prefix as the one used during compression. Referencing a raw content prefix has almost no
-    /// cpu nor memory cost.
-    pub fn prefix(mut self, prefix: &'p [u8]) -> Self {
-        self.prefix = Some(prefix);
-        self
-    }
-
-    /// Creates a [`RawDecoder`] with the configuration.
-    ///
-    /// # Errors
-    ///
-    /// Fails if zstd returns an error.
-    pub fn into_raw_decoder(self) -> Result<RawDecoder<'d, 'p>>
-    where
-        'p: 'd,
-    {
-        let mut dctx = if let Some(dctx) = self.dctx {
-            dctx
-        } else {
-            DCtx::try_create().ok_or(Error::zstd_create("decompression context"))?
-        };
-
-        if let Some(prefix) = self.prefix {
-            dctx.ref_prefix(prefix)?;
-        }
-
-        Ok(RawDecoder {
+    pub fn with_dctx(src: S, dctx: DCtx<'a>) -> Self {
+        Self {
             dctx,
-            prefix: self.prefix,
-        })
-    }
-
-    /// Create a [`Decoder`] with the configuration.
-    ///
-    /// # Errors
-    ///
-    /// Fails if zstd returns an error.
-    pub fn into_decoder<S: Seekable>(self, mut src: S) -> Result<Decoder<'d, 'p, S>>
-    where
-        'p: 'd,
-    {
-        let seek_table = SeekTable::from_seekable(&mut src)?;
-        let raw = self.into_raw_decoder()?;
-        let upper_frame = seek_table.num_frames() - 1;
-
-        Ok(Decoder {
-            raw,
-            seek_table,
             src,
-            src_pos: 0,
-            lower_frame: 0,
-            upper_frame,
-            in_buf: vec![0; DCtx::in_size()],
-            in_buf_pos: 0,
-            in_buf_limit: 0,
-            read_uncompressed: 0,
-        })
-    }
-}
-
-/// A seekable decompressor.
-///
-/// Performs low level in-memory seekable decompression for streams of data.
-pub struct RawDecoder<'d, 'p> {
-    dctx: DCtx<'d>,
-    prefix: Option<&'p [u8]>,
-}
-
-impl RawDecoder<'_, '_> {
-    /// Create a new `RawDecoder` with default parameters.
-    pub fn new() -> Result<Self> {
-        DecodeOptions::new().into_raw_decoder()
-    }
-}
-
-impl<'d, 'p> RawDecoder<'d, 'p>
-where
-    'p: 'd,
-{
-    /// Performs a step of a streaming decompression from `input` to `output`.
-    ///
-    /// Call this repetitively to consume the input stream. Will return two numbers `(i, o)` where
-    /// `i` is the input progress, i.e. the number of bytes that were consumed from `input`, and
-    /// `o` is the output progress, i.e. the number of bytes written to `output`. The caller
-    /// must check if `input` has been entirely consumed. If not, the caller must make some room
-    /// to receive more decompressed data, and then present again remaining input data.
-    ///
-    /// `validate_checksum` gets called on every frame end with two parameters, `pos` and
-    /// `checksum`, where `pos` is the current position in the input buffer and `checksum` are the
-    /// least 32 bit of the XXH64 hash of the decompressed frame data. An `Ok(())` result of
-    /// `validate_checksum` indicates that `checksum` was verified successfully, an error return
-    /// value will result in a failed decompression immediately.
-    pub fn decompress(&mut self, input: &[u8], output: &mut [u8]) -> Result<(usize, usize)> {
-        let mut in_buf = InBuffer::around(input);
-        let mut out_buf = OutBuffer::around(output);
-
-        while in_buf.pos() < input.len() && out_buf.pos() < out_buf.capacity() {
-            let n = self.dctx.decompress_stream(&mut out_buf, &mut in_buf)?;
-            // Frame end
-            if n == 0 {
-                self.reset_frame()?;
-            }
+            seek_table: None,
+            lower_frame: None,
+            upper_frame: None,
         }
-
-        Ok((in_buf.pos(), out_buf.pos()))
     }
 
-    // /// Performs a step of a streaming decompression from `input` to `output`.
-    // ///
-    // /// Call this repetitively to consume the input stream. Will return two numbers `(i, o)` where
-    // /// `i` is the input progress, i.e. the number of bytes that were consumed from `input`, and
-    // /// `o` is the output progress, i.e. the number of bytes written to `output`. The caller
-    // /// must check if `input` has been entirely consumed. If not, the caller must make some room
-    // /// to receive more decompressed data, and then present again remaining input data.
-    // ///
-    // /// Uses `seek_table` and `src_pos` to verify checksums of uncompressed frame data.
-    // pub fn decompress_with_seek_table(
-    //     &mut self,
-    //     seek_table: &SeekTable,
-    //     src_pos: u64,
-    //     input: &[u8],
-    //     output: &mut [u8],
-    // ) -> Result<(usize, usize)> {
-    //     self.decompress(input, output, |offset: usize, checksum: u32| {
-    //         let index = seek_table
-    //             // src_pos + offset will be the ending of the frame we just finished,
-    //             // which is also the start of the next frame. Subtract 1 to get the index
-    //             // of the right frame.
-    //             .frame_index_comp(src_pos + offset as u64 - 1);
-    //         // This gets only called if the seek table has checksums, we can expect every frame
-    //         // to have a checksum
-    //         let expected = seek_table
-    //             .frame_checksum(index)?
-    //             .expect("Frame has a checksum");
-    //
-    //         if checksum == expected {
-    //             Ok(())
-    //         } else {
-    //             Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected))
-    //         }
-    //     })
-    // }
+    pub fn dctx(mut self, dctx: DCtx<'a>) -> Self {
+        self.dctx = dctx;
+        self
+    }
 
-    /// Resets the current frame.
-    ///
-    /// This will discard any decompression progress tracked for the current frame and resets
-    /// the decompression context.
-    pub fn reset_frame(&mut self) -> Result<()> {
-        if let Some(prefix) = self.prefix {
-            self.dctx
-                .reset(ResetDirective::SessionOnly)
-                .expect("Resetting session never fails");
+    pub fn seek_table(mut self, seek_table: SeekTable) -> Self {
+        self.seek_table = Some(seek_table);
+        self
+    }
 
-            self.dctx.ref_prefix(prefix)?;
-        }
+    pub fn lower_frame(mut self, index: u32) -> Self {
+        self.lower_frame = Some(index);
+        self
+    }
 
-        Ok(())
+    pub fn upper_frame(mut self, index: u32) -> Self {
+        self.upper_frame = Some(index);
+        self
+    }
+}
+
+impl<'a, S: Seekable> DecodeOptions<'a, S> {
+    pub fn into_decoder(self) -> Result<Decoder<'a, S>> {
+        Decoder::with_opts(self)
     }
 }
 
 /// Decompresses data from a seekable source.
-pub struct Decoder<'d, 'p, S> {
-    raw: RawDecoder<'d, 'p>,
+pub struct Decoder<'a, S> {
+    dctx: DCtx<'a>,
     seek_table: SeekTable,
     src: S,
     src_pos: u64,
@@ -201,39 +70,53 @@ pub struct Decoder<'d, 'p, S> {
     in_buf: Vec<u8>,
     in_buf_pos: usize,
     in_buf_limit: usize,
-    read_uncompressed: u64,
+    read_compressed: u64,
 }
 
-impl<S: Seekable> Decoder<'_, '_, S> {
+impl<'a, S: Seekable> Decoder<'a, S> {
     /// Creates a new `Decoder` with default parameters and `src` as source.
-    pub fn from_seekable(src: S) -> Result<Self> {
-        DecodeOptions::new().into_decoder(src)
+    pub fn new(src: S) -> Result<Self> {
+        Self::with_opts(DecodeOptions::new(src))
     }
 
-    /// Creates a new `Decoder` with default parameters and a slice as source.
-    ///
-    /// The slice needs to hold the complete seekable data, including the seek table.
-    pub fn from_bytes(src: &[u8]) -> Result<Decoder<'_, '_, BytesWrapper<'_>>> {
-        let wrapper = BytesWrapper::new(src);
-        DecodeOptions::new().into_decoder(wrapper)
-    }
-}
+    pub fn with_opts(mut opts: DecodeOptions<'a, S>) -> Result<Self> {
+        let seek_table = opts
+            .seek_table
+            .map_or_else(|| SeekTable::from_seekable(&mut opts.src), Ok)?;
+        let lower_frame = opts.lower_frame.unwrap_or(0);
+        // Make sure overflowing sub doesn't happen when num_frames() == 0
+        let upper_frame = opts
+            .upper_frame
+            .unwrap_or_else(|| seek_table.num_frames().max(1) - 1);
 
-impl<'d, 'p, S> Decoder<'d, 'p, S>
-where
-    S: Seekable,
-    'p: 'd,
-{
-    /// Decompresses data from the internal source and writes it to `buf`.
-    ///
-    /// Call this repetitively to decompress data. Returns the number of bytes written to `buf`.
-    pub fn decode(&mut self, buf: &mut [u8]) -> Result<usize> {
+        Ok(Self {
+            dctx: opts.dctx,
+            seek_table,
+            src: opts.src,
+            src_pos: 0,
+            lower_frame,
+            upper_frame,
+            in_buf: vec![0; DCtx::in_size()],
+            in_buf_pos: 0,
+            in_buf_limit: 0,
+            read_compressed: 0,
+        })
+    }
+
+    pub fn decompress_with_prefix<'b: 'a>(
+        &mut self,
+        buf: &mut [u8],
+        prefix: Option<&'b [u8]>,
+    ) -> Result<usize> {
         let end_pos = self.seek_table.frame_end_comp(self.upper_frame)?;
         if self.src_pos == 0 {
             let start_pos = self.seek_table.frame_start_comp(self.lower_frame)?;
             self.src.set_offset(start_pos)?;
             self.src_pos = start_pos;
-            self.raw.reset_frame()?;
+            // Reference prefix at the beginning of decompression
+            if let Some(pref) = prefix {
+                self.dctx.ref_prefix(pref)?;
+            }
         }
 
         let mut output_progress = 0;
@@ -245,55 +128,78 @@ where
                 self.in_buf_pos = 0;
             }
 
-            let (inp_prog, out_prog) = self.raw.decompress(
-                &self.in_buf[self.in_buf_pos..self.in_buf_limit],
-                &mut buf[output_progress..],
-            )?;
+            let mut in_buffer = InBuffer::around(&self.in_buf[self.in_buf_pos..self.in_buf_limit]);
+            let mut out_buffer = OutBuffer::around(&mut buf[output_progress..]);
 
-            self.src_pos += inp_prog as u64;
-            self.in_buf_pos += inp_prog;
-            self.read_uncompressed += inp_prog as u64;
-            output_progress += out_prog;
+            let in_len = self.in_buf_limit - self.in_buf_pos;
+            while in_buffer.pos() < in_len && out_buffer.pos() < out_buffer.capacity() {
+                let n = self
+                    .dctx
+                    .decompress_stream(&mut out_buffer, &mut in_buffer)?;
+                // Frame end
+                // TODO: chain when stable
+                if n == 0 {
+                    if let Some(pref) = prefix {
+                        // TODO: reset required?
+                        self.dctx
+                            .reset(ResetDirective::SessionOnly)
+                            .expect("Resetting session never fails");
+                        self.dctx.ref_prefix(pref)?;
+                    }
+                }
+            }
+
+            self.src_pos += in_buffer.pos() as u64;
+            self.in_buf_pos += in_buffer.pos();
+            self.read_compressed += in_buffer.pos() as u64;
+            output_progress += out_buffer.pos();
         }
+
         Ok(output_progress)
     }
+}
 
-    /// Resets the current frame.
+impl<S: Seekable> Decoder<'_, S> {
+    /// Decompresses data from the internal source and writes it to `buf`.
     ///
-    /// This will discard any decompression progress tracked for the current frame and resets
-    /// the decompression context.
-    pub fn reset_frame(&mut self) -> Result<()> {
-        self.raw.reset_frame()?;
+    /// Call this repetitively to decompress data. Returns the number of bytes written to `buf`.
+    pub fn decompress(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.decompress_with_prefix(buf, None)
+    }
+
+    pub fn reset(&mut self) {
+        self.dctx
+            .reset(ResetDirective::SessionOnly)
+            .expect("Resetting session never fails");
         self.src_pos = 0;
         self.in_buf_pos = 0;
         self.in_buf_limit = 0;
-
-        Ok(())
+        self.read_compressed = 0;
     }
 
     /// Sets the index of the frame where decompression starts.
     ///
-    /// Resets the current frame decompression progress, this shouldn't be called in the middle of
-    /// a decompression operation.
-    pub fn set_lower_frame(&mut self, index: u32) -> Result<()> {
+    /// Also resets the current decompression state.
+    pub fn set_lower_frame(&mut self, index: u32) {
+        self.reset();
         self.lower_frame = index;
-        self.reset_frame()?;
-
-        Ok(())
     }
 
     /// Sets the index of the last frame that is included in decompression.
+    ///
+    /// This does not reset the current decompression state, so it is possible to change the upper
+    /// frame in the middle of a decompression operation.
     pub fn set_upper_frame(&mut self, index: u32) {
         self.upper_frame = index;
     }
 
-    /// Gets the total number of uncompressed bytes read until now.
-    pub fn read_uncompressed(&self) -> u64 {
-        self.read_uncompressed
+    /// Gets the total number of compressed bytes read since the last reset.
+    pub fn read_compressed(&self) -> u64 {
+        self.read_compressed
     }
 }
 
-impl<S> Deref for Decoder<'_, '_, S> {
+impl<S> Deref for Decoder<'_, S> {
     type Target = SeekTable;
 
     fn deref(&self) -> &Self::Target {
@@ -301,12 +207,131 @@ impl<S> Deref for Decoder<'_, '_, S> {
     }
 }
 
-impl<'d, 'p, S> std::io::Read for Decoder<'d, 'p, S>
-where
-    S: Seekable,
-    'p: 'd,
-{
+impl<S: Seekable> std::io::Read for Decoder<'_, S> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.decode(buf).map_err(std::io::Error::other)
+        self.decompress(buf).map_err(std::io::Error::other)
     }
 }
+
+// /// Decompresses data from a seekable source.
+// pub struct Decoder<'a, 'b, S> {
+//     raw: RawDecoder<'a, 'b>,
+//     seek_table: SeekTable,
+//     src: S,
+//     src_pos: u64,
+//     lower_frame: u32,
+//     upper_frame: u32,
+//     in_buf: Vec<u8>,
+//     in_buf_pos: usize,
+//     in_buf_limit: usize,
+//     read_uncompressed: u64,
+// }
+//
+// impl<S: Seekable> Decoder<'_, '_, S> {
+//     /// Creates a new `Decoder` with default parameters and `src` as source.
+//     pub fn from_seekable(src: S) -> Result<Self> {
+//         DecodeOptions::new().into_decoder(src)
+//     }
+//
+//     /// Creates a new `Decoder` with default parameters and a slice as source.
+//     ///
+//     /// The slice needs to hold the complete seekable data, including the seek table.
+//     pub fn from_bytes(src: &[u8]) -> Result<Decoder<'_, '_, BytesWrapper<'_>>> {
+//         let wrapper = BytesWrapper::new(src);
+//         DecodeOptions::new().into_decoder(wrapper)
+//     }
+// }
+//
+// impl<'a, 'b, S> Decoder<'a, 'b, S>
+// where
+//     S: Seekable,
+//     'b: 'a,
+// {
+//     /// Decompresses data from the internal source and writes it to `buf`.
+//     ///
+//     /// Call this repetitively to decompress data. Returns the number of bytes written to `buf`.
+//     pub fn decode(&mut self, buf: &mut [u8]) -> Result<usize> {
+//         let end_pos = self.seek_table.frame_end_comp(self.upper_frame)?;
+//         if self.src_pos == 0 {
+//             let start_pos = self.seek_table.frame_start_comp(self.lower_frame)?;
+//             self.src.set_offset(start_pos)?;
+//             self.src_pos = start_pos;
+//             self.raw.reset_frame()?;
+//         }
+//
+//         let mut output_progress = 0;
+//         while self.src_pos < end_pos && output_progress < buf.len() {
+//             if self.in_buf_pos == self.in_buf_limit {
+//                 // Casting is ok because max value is buf.len()
+//                 let limit = (end_pos - self.src_pos).min(self.in_buf.len() as u64) as usize;
+//                 self.in_buf_limit = self.src.read(&mut self.in_buf[..limit])?;
+//                 self.in_buf_pos = 0;
+//             }
+//
+//             let (inp_prog, out_prog) = self.raw.decompress_with_seek_table(
+//                 &self.seek_table,
+//                 self.src_pos,
+//                 &self.in_buf[self.in_buf_pos..self.in_buf_limit],
+//                 &mut buf[output_progress..],
+//             )?;
+//
+//             self.src_pos += inp_prog as u64;
+//             self.in_buf_pos += inp_prog;
+//             self.read_uncompressed += inp_prog as u64;
+//             output_progress += out_prog;
+//         }
+//         Ok(output_progress)
+//     }
+//
+//     /// Resets the current frame.
+//     ///
+//     /// This will discard any decompression progress tracked for the current frame and resets
+//     /// the decompression context.
+//     pub fn reset_frame(&mut self) -> Result<()> {
+//         self.raw.reset_frame()?;
+//         self.src_pos = 0;
+//         self.in_buf_pos = 0;
+//         self.in_buf_limit = 0;
+//
+//         Ok(())
+//     }
+//
+//     /// Sets the index of the frame where decompression starts.
+//     ///
+//     /// Resets the current frame decompression progress, this shouldn't be called in the middle of
+//     /// a decompression operation.
+//     pub fn set_lower_frame(&mut self, index: u32) -> Result<()> {
+//         self.lower_frame = index;
+//         self.reset_frame()?;
+//
+//         Ok(())
+//     }
+//
+//     /// Sets the index of the last frame that is included in decompression.
+//     pub fn set_upper_frame(&mut self, index: u32) {
+//         self.upper_frame = index;
+//     }
+//
+//     /// Gets the total number of uncompressed bytes read until now.
+//     pub fn read_uncompressed(&self) -> u64 {
+//         self.read_uncompressed
+//     }
+// }
+//
+// impl<S> Deref for Decoder<'_, '_, S> {
+//     type Target = SeekTable;
+//
+//     fn deref(&self) -> &Self::Target {
+//         &self.seek_table
+//     }
+// }
+//
+// impl<'a, 'b, S> std::io::Read for Decoder<'a, 'b, S>
+// where
+//     S: Seekable,
+//     'b: 'a,
+// {
+//     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+//         self.decode(buf).map_err(std::io::Error::other)
+//     }
+// }

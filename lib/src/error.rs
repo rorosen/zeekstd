@@ -35,28 +35,6 @@ impl Error {
         matches!(self.kind, Kind::OffsetOutOfRange)
     }
 
-    pub(crate) fn write_in_progress() -> Self {
-        Self {
-            kind: Kind::WriteInProgress,
-        }
-    }
-
-    /// Returns true if the error is related to a write in progress.
-    pub fn is_write_in_progress(&self) -> bool {
-        matches!(self.kind, Kind::WriteInProgress)
-    }
-
-    pub(crate) fn missing_checksum() -> Self {
-        Self {
-            kind: Kind::MissingChecksum,
-        }
-    }
-
-    /// Returns true if the error is related to a missing checksum that is required.
-    pub fn is_missing_checksum(&self) -> bool {
-        matches!(self.kind, Kind::MissingChecksum)
-    }
-
     pub(crate) fn frame_index_too_large() -> Self {
         Self {
             kind: Kind::FrameIndexTooLarge,
@@ -80,16 +58,6 @@ impl Error {
         matches!(self.kind, Kind::Zstd(_))
     }
 
-    pub(crate) fn zstd_create(msg: &'static str) -> Self {
-        Self {
-            kind: Kind::ZstdCreate(msg),
-        }
-    }
-
-    /// Returns true if the error is related to a failed creation of a zstd type.
-    pub fn is_zstd_create(&self) -> bool {
-        matches!(self.kind, Kind::ZstdCreate(_))
-    }
 }
 
 impl core::fmt::Display for Error {
@@ -98,11 +66,8 @@ impl core::fmt::Display for Error {
             Kind::Other(err) => write!(f, "{err}"),
             Kind::NumberConversionFailed(err) => write!(f, "number conversion failed: {err}"),
             Kind::OffsetOutOfRange => f.write_str("offset out of range"),
-            Kind::WriteInProgress => f.write_str("not supported when writing"),
             Kind::FrameIndexTooLarge => f.write_str("frame index too large"),
             Kind::IO(err) => write!(f, "io error: {err}"),
-            Kind::MissingChecksum => f.write_str("checksum is required"),
-            Kind::ZstdCreate(t) => write!(f, "failed to create zstd type {t:?}"),
             Kind::Zstd(code) => f.write_str(get_error_name(*code)),
         }
     }
@@ -140,16 +105,10 @@ enum Kind {
     NumberConversionFailed(core::num::TryFromIntError),
     /// The desired offset is out of range.
     OffsetOutOfRange,
-    /// Action not supported when writing.
-    WriteInProgress,
     /// The passed frame index is too large.
     FrameIndexTooLarge,
     /// IO error.
     IO(std::io::Error),
-    /// A required checksum is missing.
-    MissingChecksum,
-    /// Failed to create zstd type.
-    ZstdCreate(&'static str),
     /// An error from the zstd library.
     Zstd(ErrorCode),
 }
@@ -162,11 +121,8 @@ impl core::fmt::Debug for Kind {
                 f.debug_tuple("NumberConversionFailed").field(arg0).finish()
             }
             Self::OffsetOutOfRange => write!(f, "OffsetOutOfRange"),
-            Self::WriteInProgress => write!(f, "WriteInProgress"),
             Self::FrameIndexTooLarge => write!(f, "FrameIndexTooLarge"),
             Self::IO(arg0) => f.debug_tuple("IO").field(arg0).finish(),
-            Self::MissingChecksum => write!(f, "MissingChecksum"),
-            Self::ZstdCreate(arg0) => f.debug_tuple("ZstdCreate").field(arg0).finish(),
             Self::Zstd(c) => write!(f, "{}; code {}", zstd_safe::get_error_name(*c), c),
         }
     }
