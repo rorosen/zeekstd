@@ -37,7 +37,7 @@
 //!
 //! let input = File::open("seekable.zst")?;
 //! let mut output = File::create("data")?;
-//! let mut decoder = Decoder::from_seekable(input)?;
+//! let mut decoder = Decoder::new(input)?;
 //! io::copy(&mut decoder, &mut output)?;
 //! # Ok::<(), zeekstd::Error>(())
 //! ```
@@ -48,7 +48,7 @@
 //! # use std::{fs::File, io};
 //! # use zeekstd::Decoder;
 //! # let seekable = File::open("seekable.zst")?;
-//! # let mut decoder = Decoder::from_seekable(seekable)?;
+//! # let mut decoder = Decoder::new(seekable)?;
 //! decoder.set_lower_frame(2);
 //! decoder.set_upper_frame(3);
 //! io::copy(&mut decoder, &mut io::stdout())?;
@@ -130,7 +130,7 @@ mod tests {
         // let mut seekable = std::fs::File::create("/tmp/num.zst")?;
         // let mut cctx = CCtx::create();
         // cctx.set_parameter(CParameter::ChecksumFlag(true))?;
-        let mut encoder = Encoder::new(&mut seekable);
+        let mut encoder = Encoder::new(&mut seekable)?;
         // let mut encoder = Encoder::with_opts(&mut seekable, EncodeOptions::with_cctx(cctx));
 
         // Compress the input
@@ -162,7 +162,8 @@ mod tests {
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = EncodeOptions::new()
             .frame_size_policy(FrameSizePolicy::Uncompressed(LINE_LEN * LINES_IN_FRAME))
-            .into_encoder(&mut seekable);
+            .into_encoder(&mut seekable)
+            .unwrap();
 
         // Compress the input
         io::copy(&mut input, &mut encoder).unwrap();
@@ -259,7 +260,10 @@ mod tests {
         let mut cctx = CCtx::create();
         cctx.set_parameter(CParameter::WindowLog(window_log))?;
         cctx.set_parameter(CParameter::EnableLongDistanceMatching(true))?;
-        let mut encoder = EncodeOptions::new().cctx(cctx).into_encoder(&mut patch);
+        let mut encoder = EncodeOptions::new()
+            .cctx(cctx)
+            .into_encoder(&mut patch)
+            .unwrap();
 
         // Create a binary diff
         let mut input_progress = 0;

@@ -19,11 +19,6 @@ impl<W> Compressor<'_, W> {
         let cctx_err = |msg, c| anyhow!("{msg}: {}", zstd_safe::get_error_name(c));
         let mut cctx = CCtx::try_create().context("Failed to create compression context")?;
 
-        cctx.set_parameter(CParameter::CompressionLevel(args.compression_level))
-            .map_err(|c| cctx_err("Failed to set compression level", c))?;
-        cctx.set_parameter(CParameter::ChecksumFlag(!args.no_checksum))
-            .map_err(|c| cctx_err("Failed to set checksum flag", c))?;
-
         if let Some(old) = &args.patch_from {
             let len = fs::metadata(old)
                 .context("Failed to get metadata of patch reference file")?
@@ -37,7 +32,10 @@ impl<W> Compressor<'_, W> {
 
         let encoder = EncodeOptions::with_cctx(cctx)
             .frame_size_policy(args.to_frame_size_policy())
-            .into_encoder(writer);
+            .checksum_flag(!args.no_checksum)
+            .compression_level(args.compression_level)
+            .into_encoder(writer)
+            .context("Failed to create encoder")?;
 
         Ok(Self { encoder })
     }

@@ -1,4 +1,7 @@
-use zstd_safe::{CCtx, InBuffer, OutBuffer, ResetDirective, zstd_sys::ZSTD_EndDirective};
+use zstd_safe::{
+    CCtx, CParameter, CompressionLevel, InBuffer, OutBuffer, ResetDirective,
+    zstd_sys::ZSTD_EndDirective,
+};
 
 use crate::{SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result};
 
@@ -35,37 +38,33 @@ impl Default for FrameSizePolicy {
 ///
 /// # Examples
 ///
-/// Create a raw encoder that limit frame size to 8KiB of uncompressed data and doesn't create
-/// frame checksums.
-///
 /// ```
 /// use zeekstd::{EncodeOptions, FrameSizePolicy};
 ///
 /// let compressor = EncodeOptions::new()
+///     .checksum_flag(false)
+///     .compression_level(5)
 ///     .frame_size_policy(FrameSizePolicy::Uncompressed(8192))
-///     .with_checksum(false)
-///     .into_raw_encoder()?;
+///     .into_raw()?;
 /// # Ok::<(), zeekstd::Error>(())
 /// ```
 pub struct EncodeOptions<'a> {
     cctx: CCtx<'a>,
     frame_policy: FrameSizePolicy,
-    // TODO: comp_level, with_checksum
+    checksum_flag: bool,
+    compression_level: CompressionLevel,
 }
 
 impl Default for EncodeOptions<'_> {
     fn default() -> Self {
-        Self {
-            cctx: CCtx::create(),
-            frame_policy: FrameSizePolicy::default(),
-        }
+        Self::new()
     }
 }
 
 impl<'a> EncodeOptions<'a> {
     /// Creates a set of options with default initial values.
     pub fn new() -> Self {
-        Self::default()
+        Self::with_cctx(CCtx::create())
     }
 
     pub fn try_new() -> Option<Self> {
@@ -77,6 +76,8 @@ impl<'a> EncodeOptions<'a> {
         Self {
             cctx,
             frame_policy: FrameSizePolicy::default(),
+            checksum_flag: false,
+            compression_level: CompressionLevel::default(),
         }
     }
 
@@ -92,11 +93,21 @@ impl<'a> EncodeOptions<'a> {
         self
     }
 
-    pub fn into_raw(self) -> RawEncoder<'a> {
+    pub fn checksum_flag(mut self, flag: bool) -> Self {
+        self.checksum_flag = flag;
+        self
+    }
+
+    pub fn compression_level(mut self, level: CompressionLevel) -> Self {
+        self.compression_level = level;
+        self
+    }
+
+    pub fn into_raw(self) -> Result<RawEncoder<'a>> {
         RawEncoder::with_opts(self)
     }
 
-    pub fn into_encoder<W>(self, writer: W) -> Encoder<'a, W> {
+    pub fn into_encoder<W>(self, writer: W) -> Result<Encoder<'a, W>> {
         Encoder::with_opts(writer, self)
     }
 }
@@ -112,26 +123,25 @@ pub struct RawEncoder<'a> {
     seek_table: SeekTable,
 }
 
-impl Default for RawEncoder<'_> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<'a> RawEncoder<'a> {
     /// Creates a new `RawEncoder` with default parameters.
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         Self::with_opts(EncodeOptions::new())
     }
 
-    pub fn with_opts(opts: EncodeOptions<'a>) -> Self {
-        Self {
+    pub fn with_opts(mut opts: EncodeOptions<'a>) -> Result<Self> {
+        opts.cctx
+            .set_parameter(CParameter::CompressionLevel(opts.compression_level))?;
+        opts.cctx
+            .set_parameter(CParameter::ChecksumFlag(opts.checksum_flag))?;
+
+        Ok(Self {
             cctx: opts.cctx,
             frame_policy: opts.frame_policy,
             frame_c_size: 0,
             frame_d_size: 0,
             seek_table: SeekTable::new(),
-        }
+        })
     }
 
     fn compress_with_prefix<'b: 'a>(
@@ -278,18 +288,18 @@ impl<'a, W> Encoder<'a, W> {
     /// Creates a new `Encoder` with default parameters.
     ///
     /// Compressed data gets written to `writer`.
-    pub fn new(writer: W) -> Self {
+    pub fn new(writer: W) -> Result<Self> {
         Self::with_opts(writer, EncodeOptions::new())
     }
 
-    pub fn with_opts(writer: W, opts: EncodeOptions<'a>) -> Self {
-        Self {
-            raw: opts.into_raw(),
+    pub fn with_opts(writer: W, opts: EncodeOptions<'a>) -> Result<Self> {
+        Ok(Self {
+            raw: opts.into_raw()?,
             out_buf: vec![0; CCtx::out_size()],
             out_buf_pos: 0,
             writer,
             written_compressed: 0,
-        }
+        })
     }
 }
 

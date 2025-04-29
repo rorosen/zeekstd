@@ -38,7 +38,7 @@ use zeekstd::Decoder;
 fn main() -> zeekstd::Result<()> {
     let input = File::open("seekable.zst")?;
     let mut output = File::create("data")?;
-    let mut decoder = Decoder::from_seekable(input)?;
+    let mut decoder = Decoder::new(input)?;
     io::copy(&mut decoder, &mut output)?;
 
     Ok(())
