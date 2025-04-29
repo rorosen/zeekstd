@@ -10,6 +10,7 @@ pub struct Error {
 }
 
 impl Error {
+    /// A custom error.
     pub fn other<E>(err: E) -> Self
     where
         E: Into<Box<dyn core::error::Error + Send + Sync>>,
@@ -57,7 +58,6 @@ impl Error {
     pub fn is_zstd(&self) -> bool {
         matches!(self.kind, Kind::Zstd(_))
     }
-
 }
 
 impl core::fmt::Display for Error {

@@ -5,13 +5,13 @@ use crate::{
 
 /// Represents a seekable source.
 pub trait Seekable {
-    /// Sets the offset from the start of the seekable.
+    /// Sets the read offset from the start of the seekable.
     fn set_offset(&mut self, offset: u64) -> Result<()>;
     /// Pull some bytes from this source into the specified buffer, returning how many bytes were read.
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
     /// Returns the footer of this seekable.
     ///
-    /// In most cases, the footer contains the integrity field of the seek table.
+    /// The footer typically contains the integrity field of the seek table.
     fn seek_table_footer(&mut self) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]>;
     /// Seeks to the start of the seek table.
     fn seek_to_seek_table_start(&mut self, seek_table_size: usize) -> Result<()>;

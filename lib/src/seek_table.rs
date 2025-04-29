@@ -6,7 +6,7 @@ use crate::{
     seekable::Seekable,
 };
 
-// Reads 4 bytes from buf at offset into an u32
+// Reads 4 bytes from buf starting at offset into an u32
 macro_rules! read_le32 {
     ($buf:expr, $offset:expr) => {
         ($buf[$offset] as u32)
@@ -39,6 +39,7 @@ macro_rules! write_le32 {
     };
 }
 
+// Writes the header of a zstd skippable frame
 macro_rules! write_skippable_header {
     ($buf:expr, $buf_pos:expr, $self:expr) => {
         write_le32!($buf, $buf_pos, $self.write_pos, SKIPPABLE_MAGIC_NUMBER, 0);
@@ -46,6 +47,7 @@ macro_rules! write_skippable_header {
     };
 }
 
+// Writes a frame entry
 macro_rules! write_frame {
     ($buf:expr, $buf_pos:expr, $self:expr, $offset:expr) => {
         write_le32!(
@@ -66,6 +68,7 @@ macro_rules! write_frame {
     };
 }
 
+// Writes the integrity field of the seek table
 macro_rules! write_integrity {
     ($buf:expr, $buf_pos:expr, $self:expr, $num_frames:expr, $offset:expr) => {
         write_le32!($buf, $buf_pos, $self.write_pos, $num_frames, $offset);
@@ -140,7 +143,6 @@ impl core::ops::Index<u32> for Entries {
     }
 }
 
-/// A helper struct that parses the bytes of a seek table.
 #[derive(Debug)]
 struct Parser {
     num_frames: usize,
@@ -152,13 +154,6 @@ struct Parser {
 }
 
 impl Parser {
-    /// Create a [`SeekTableParser`] from the footer of a seek table.
-    ///
-    /// The footer consists of the last 9 bytes of a seek table.
-    ///
-    /// # Errors
-    ///
-    /// Fails if `buf` does not contain a valid seek table footer.
     fn from_integrity(buf: &[u8]) -> Result<Self> {
         if read_le32!(buf, 5) != SEEKABLE_MAGIC_NUMBER {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown));
@@ -189,14 +184,6 @@ impl Parser {
         })
     }
 
-    /// Verifies the header of the seek table.
-    ///
-    /// The header consists of the first 8 bytes of a seek table.
-    ///
-    /// # Errors
-    ///
-    /// Fails if `buf` does not start with the skippable magic number (`0x184D2A5E`) or does not
-    /// specify the correct seek table size.
     fn verify_skippable_header(&self, buf: &[u8]) -> Result<()> {
         if read_le32!(buf, 0) != SKIPPABLE_MAGIC_NUMBER {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown));
@@ -209,10 +196,6 @@ impl Parser {
         Ok(())
     }
 
-    /// Call this repetitively to parse the entries of a seek table.
-    ///
-    /// Returns how many bytes were consumed from `buf`. In case of a `0` return value, all
-    /// entries were parsed or the provided buffer is too small.
     fn parse_entries(&mut self, buf: &[u8]) -> usize {
         let Self {
             entries,
@@ -223,7 +206,7 @@ impl Parser {
 
         let mut pos: usize = 0;
         while entries.0.len() < self.num_frames {
-            // TODO: consume everything up to buf.len()
+            // TODO: consume everything up to buf.len()?
             if pos + self.size_per_frame > buf.len() {
                 return pos;
             }
@@ -296,6 +279,7 @@ impl Default for SeekTable {
 }
 
 impl SeekTable {
+    // Create a new, empty seek table.
     pub fn new() -> Self {
         let entries = Entries(vec![Entry {
             c_offset: 0,
@@ -305,13 +289,15 @@ impl SeekTable {
         Self { entries }
     }
 
-    /// Creates a new `SeekTable` from a seekable archive.
+    /// Parses the seek table from a seekable archive.
+    ///
+    /// This only works if the seek table has the descriptor section at the end as a footer and is
+    /// appended to the end of the archive.
     ///
     /// # Errors
     ///
     /// Returns an error if the seek table cannot be parsed or validation fails.
-    pub fn from_seekable(src: &mut impl Seekable) -> Result<Self>
-    {
+    pub fn from_seekable(src: &mut impl Seekable) -> Result<Self> {
         let footer = src.seek_table_footer()?;
         let mut parser = Parser::from_integrity(&footer)?;
         src.seek_to_seek_table_start(parser.seek_table_size)?;
@@ -343,6 +329,16 @@ impl SeekTable {
         Ok(parser.into())
     }
 
+    /// Parses a seek table from a byte slice.
+    ///
+    /// The passed `buf` should only contain the seek table, not the complete seekable archive.
+    /// Will first look for the seekable integrity field at the start of `buf` (header), if
+    /// that fails, it will try to find the integrity field at the end of `buf` (footer).
+    ///
+    /// # Errors
+    ///
+    /// Fails if the integrity field is neither present as header nor as footer, or if
+    /// verification fails.
     pub fn from_bytes(buf: &[u8]) -> Result<Self> {
         let mut offset = SKIPPABLE_HEADER_SIZE;
         let mut parser = if read_le32!(buf, SKIPPABLE_HEADER_SIZE + 5) == SEEKABLE_MAGIC_NUMBER {
@@ -361,6 +357,14 @@ impl SeekTable {
         Ok(parser.into())
     }
 
+    /// Parses a seek table from a reader.
+    ///
+    /// The passed `reader` should only contain the seek table, not the complete seekable archive.
+    /// Will only work if the seekable integrity field is present as a header.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the integrity field is not present as header, or if verification fails.
     pub fn from_reader(mut reader: impl std::io::Read) -> Result<Self> {
         let mut buf = [0u8; SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE];
         reader.read_exact(&mut buf)?;
@@ -384,6 +388,11 @@ impl SeekTable {
         Ok(parser.into())
     }
 
+    /// Adds a frame to this seek table.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `num_frames()` reaches `SEEKABLE_MAX_FRAMES`.
     pub fn log_frame(&mut self, c_size: u32, d_size: u32) -> Result<()> {
         if self.num_frames() >= SEEKABLE_MAX_FRAMES {
             return Err(Error::frame_index_too_large());
@@ -398,7 +407,7 @@ impl SeekTable {
         Ok(())
     }
 
-    /// The number of frames in the `SeekTable`.
+    /// The number of frames in this seek table.
     pub fn num_frames(&self) -> u32 {
         // Can always be casted (max value SEEKABLE_MAX_FRAMES)
         (self.entries.0.len() - 1) as u32
@@ -409,7 +418,7 @@ impl SeekTable {
         self.frame_index_at(offset, |i| self.entries[i].c_offset)
     }
 
-    /// Gets the frame index at the given decompressed offset.
+    /// The frame index at the given decompressed offset.
     pub fn frame_index_decomp(&self, offset: u64) -> u32 {
         self.frame_index_at(offset, |i| self.entries[i].d_offset)
     }
@@ -516,6 +525,11 @@ impl SeekTable {
             .unwrap_or(0)
     }
 
+    /// Convert this seek table in an immutable, serializable form.
+    ///
+    /// The seek table will be serialized with the seekable integrity field placed as a
+    /// header before any frame data. This is useful for creating a stand-alone seek table that
+    /// can be parsed in a streaming fashion, i.e. without seeking the input.
     pub fn into_head_serializer(self) -> HeadSerializer {
         HeadSerializer {
             frames: self.entries.into_frames(),
@@ -524,6 +538,11 @@ impl SeekTable {
         }
     }
 
+    /// Convert this seek table in an immutable, serializable form.
+    ///
+    /// The seek table will be serialized with the seekable integrity field placed as a
+    /// footer after any frame data. This is the typical seek table that can be appended to a
+    /// seekable archive, however, parses need to seek the input for deserialization.
     pub fn into_foot_serializer(self) -> FootSerializer {
         FootSerializer {
             frames: self.entries.into_frames(),
@@ -553,6 +572,28 @@ impl SeekTable {
     }
 }
 
+/// A helper for seek table serialization with a header integrity field.
+///
+/// The seek table will be serialized with the seekable integrity field placed as a
+/// header before any frame data. This is useful for creating stand-alone seek tables that
+/// can be parsed in a streaming fashion, i.e. without seeking the input.
+///
+/// # Examples
+///
+/// ```
+/// use zeekstd::SeekTable;
+///
+/// let mut seek_table = SeekTable::new();
+/// seek_table.log_frame(123, 456)?;
+/// seek_table.log_frame(333, 444)?;
+///
+/// let mut ser = seek_table.into_head_serializer();
+/// let mut buf = vec![0; ser.encoded_len()];
+///
+/// ser.write_into(&mut buf);
+///
+/// # Ok::<(), zeekstd::Error>(())
+/// ```
 pub struct HeadSerializer {
     frames: Vec<Frame>,
     frame_index: usize,
@@ -560,13 +601,17 @@ pub struct HeadSerializer {
 }
 
 impl HeadSerializer {
+    /// Wite the seek table into `buf`.
+    ///
+    /// Returns the number of written. Call this repetitively until `0` is returned to serialize
+    /// the entire seek table.
     pub fn write_into(&mut self, buf: &mut [u8]) -> usize {
         let mut buf_pos = 0;
 
         write_skippable_header!(buf, buf_pos, self);
         // Always fits in u32 (max value SEEKABLE_MAX_FRAMES)
         let num_frames = self.frames.len() as u32;
-        // Write the integrity block at the beginning (head)
+        // Write the integrity field at the beginning (head)
         write_integrity!(buf, buf_pos, self, num_frames, SKIPPABLE_HEADER_SIZE);
 
         // Serialize frames
@@ -580,19 +625,47 @@ impl HeadSerializer {
         buf_pos
     }
 
+    /// Reset the serialization progress.
+    ///
+    /// Serialization stars from the beginning after calling this function. Can be called at any
+    /// time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// # let mut seek_table = SeekTable::new();
+    /// # seek_table.log_frame(123, 456)?;
+    /// # seek_table.log_frame(333, 444)?;
+    /// let mut ser = seek_table.into_head_serializer();
+    /// let mut first = vec![0; ser.encoded_len()];
+    /// let mut second = vec![0; ser.encoded_len()];
+    ///
+    /// let n = ser.write_into(&mut first);
+    /// assert_eq!(n, ser.encoded_len());
+    ///
+    /// ser.reset();
+    ///
+    /// let n = ser.write_into(&mut second);
+    /// assert_eq!(n, ser.encoded_len());
+    ///
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn reset(&mut self) {
         self.write_pos = 0;
         self.frame_index = 0;
     }
 
-    pub fn len(&self) -> usize {
+    /// The length of the entire skippable frame, including skippable header and frame size.
+    pub fn encoded_len(&self) -> usize {
         SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE + self.frames.len() * SIZE_PER_FRAME
     }
 
     // The total size of the seek table frame, not including the SKIPPABLE_MAGIC_NUMBER and
     // seek_table_size. Should always fit in u32.
     fn frame_size(&self) -> u32 {
-        (self.len() - SKIPPABLE_HEADER_SIZE) as u32
+        (self.encoded_len() - SKIPPABLE_HEADER_SIZE) as u32
     }
 }
 
@@ -602,6 +675,28 @@ impl std::io::Read for HeadSerializer {
     }
 }
 
+/// A helper for seek table serialization with a footer integrity field.
+///
+/// The seek table will be serialized with the seekable integrity field placed as a
+/// footer after any frame data. This is the typical seek table that can be appended to a
+/// seekable archive, however, parses need to seek the input for deserialization.
+///
+/// # Examples
+///
+/// ```
+/// use zeekstd::SeekTable;
+///
+/// let mut seek_table = SeekTable::new();
+/// seek_table.log_frame(123, 456)?;
+/// seek_table.log_frame(333, 444)?;
+///
+/// let mut ser = seek_table.into_foot_serializer();
+/// let mut buf = vec![0; ser.encoded_len()];
+///
+/// ser.write_into(&mut buf);
+///
+/// # Ok::<(), zeekstd::Error>(())
+/// ```
 pub struct FootSerializer {
     frames: Vec<Frame>,
     frame_index: usize,
@@ -609,6 +704,10 @@ pub struct FootSerializer {
 }
 
 impl FootSerializer {
+    /// Wite the seek table into `buf`.
+    ///
+    /// Returns the number of written. Call this repetitively until `0` is returned to serialize
+    /// the entire seek table.
     pub fn write_into(&mut self, buf: &mut [u8]) -> usize {
         let mut buf_pos = 0;
 
@@ -622,25 +721,53 @@ impl FootSerializer {
         let offset = SKIPPABLE_HEADER_SIZE + SIZE_PER_FRAME * self.frames.len();
         // Always fits in u32 (max value SEEKABLE_MAX_FRAMES)
         let num_frames = self.frames.len() as u32;
-        // Write the integrity block at the end (foot)
+        // Write the integrity field at the end (foot)
         write_integrity!(buf, buf_pos, self, num_frames, offset);
 
         buf_pos
     }
 
+    /// Reset the serialization progress.
+    ///
+    /// Serialization stars from the beginning after calling this function. Can be called at any
+    /// time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// # let mut seek_table = SeekTable::new();
+    /// # seek_table.log_frame(123, 456)?;
+    /// # seek_table.log_frame(333, 444)?;
+    /// let mut ser = seek_table.into_foot_serializer();
+    /// let mut first = vec![0; ser.encoded_len()];
+    /// let mut second = vec![0; ser.encoded_len()];
+    ///
+    /// let n = ser.write_into(&mut first);
+    /// assert_eq!(n, ser.encoded_len());
+    ///
+    /// ser.reset();
+    ///
+    /// let n = ser.write_into(&mut second);
+    /// assert_eq!(n, ser.encoded_len());
+    ///
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn reset(&mut self) {
         self.write_pos = 0;
         self.frame_index = 0;
     }
 
-    pub fn len(&self) -> usize {
+    /// The length of the entire skippable frame, including skippable header and frame size.
+    pub fn encoded_len(&self) -> usize {
         SKIPPABLE_HEADER_SIZE + self.frames.len() * SIZE_PER_FRAME + SEEK_TABLE_INTEGRITY_SIZE
     }
 
     // The total size of the seek table frame, not including the SKIPPABLE_MAGIC_NUMBER and
     // seek_table_size. Should always fit in u32.
     fn frame_size(&self) -> u32 {
-        (self.len() - SKIPPABLE_HEADER_SIZE) as u32
+        (self.encoded_len() - SKIPPABLE_HEADER_SIZE) as u32
     }
 }
 
@@ -711,7 +838,7 @@ mod tests {
         let mut ser = seek_table().into_head_serializer();
 
         // Complete serialization
-        let mut buf = vec![0; ser.len()];
+        let mut buf = vec![0; ser.encoded_len()];
         let n = ser.write_into(&mut buf);
         assert_eq!(n, buf.len());
 
@@ -735,7 +862,7 @@ mod tests {
             pos += len;
         }
 
-        assert_eq!(pos, ser.len());
+        assert_eq!(pos, ser.encoded_len());
     }
 
     #[test]
@@ -743,7 +870,7 @@ mod tests {
         let mut ser = seek_table().into_foot_serializer();
 
         // Complete serialization
-        let mut buf = vec![0; ser.len()];
+        let mut buf = vec![0; ser.encoded_len()];
         let n = ser.write_into(&mut buf);
         assert_eq!(n, buf.len());
 
@@ -767,16 +894,16 @@ mod tests {
             pos += len;
         }
 
-        assert_eq!(pos, ser.len());
+        assert_eq!(pos, ser.encoded_len());
     }
 
     #[test]
     fn serde_cycle_with_head_integrity() {
         let st = seek_table();
         let mut ser = st.clone().into_head_serializer();
-        let mut seek_table = Cursor::new(Vec::with_capacity(ser.len()));
+        let mut seek_table = Cursor::new(Vec::with_capacity(ser.encoded_len()));
         let n = io::copy(&mut ser, &mut seek_table).unwrap();
-        assert_eq!(n, ser.len() as u64);
+        assert_eq!(n, ser.encoded_len() as u64);
 
         let from_bytes = SeekTable::from_bytes(seek_table.get_ref()).unwrap();
         seek_table.set_position(0);
@@ -790,9 +917,9 @@ mod tests {
     fn serde_cycle_with_foot_integrity() {
         let st = seek_table();
         let mut ser = st.clone().into_foot_serializer();
-        let mut seek_table = Cursor::new(Vec::with_capacity(ser.len()));
+        let mut seek_table = Cursor::new(Vec::with_capacity(ser.encoded_len()));
         let n = io::copy(&mut ser, &mut seek_table).unwrap();
-        assert_eq!(n, ser.len() as u64);
+        assert_eq!(n, ser.encoded_len() as u64);
 
         let from_seekable = SeekTable::from_seekable(&mut seek_table).unwrap();
         let from_bytes = SeekTable::from_bytes(seek_table.get_ref()).unwrap();
@@ -805,9 +932,9 @@ mod tests {
     fn serialize_compatible_with_zstd_seekable() {
         let st = seek_table();
         let mut ser = st.clone().into_foot_serializer();
-        let mut buf = vec![0; ser.len()];
+        let mut buf = vec![0; ser.encoded_len()];
         let n = ser.write_into(&mut buf);
-        assert_eq!(n, ser.len());
+        assert_eq!(n, ser.encoded_len());
 
         let mut sa = zstd_safe::seekable::Seekable::create();
         sa.init_buff(&buf).unwrap();

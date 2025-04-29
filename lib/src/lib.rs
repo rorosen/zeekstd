@@ -62,25 +62,24 @@
 mod decode;
 mod encode;
 mod error;
-mod seek_table;
+pub mod seek_table;
 mod seekable;
 
 pub use decode::{DecodeOptions, Decoder};
 pub use encode::{EncodeOptions, Encoder, FrameSizePolicy, RawEncoder};
 pub use error::{Error, Result};
-// pub use frame_log::FrameLog;
 pub use seek_table::SeekTable;
 pub use seekable::{BytesWrapper, Seekable};
 // Re-export as it's part of the API.
 pub use zstd_safe::CompressionLevel;
 
-/// The magic number placed at the end of the seek table.
+/// The magic number of the seek table integrity field.
 pub const SEEKABLE_MAGIC_NUMBER: u32 = 0x8F92EAB1;
 /// The maximum number of frames in a seekable archive.
 pub const SEEKABLE_MAX_FRAMES: u32 = 0x8000000;
-/// The size of the seek table integrity block.
+/// The size of the seek table integrity field.
 pub const SEEK_TABLE_INTEGRITY_SIZE: usize = 9;
-/// The maximum size of the uncompressed data in a frame.
+/// The maximum size of the uncompressed data of a frame.
 pub const SEEKABLE_MAX_FRAME_SIZE: usize = 0x40000000;
 
 #[doc = include_str!("../../README.md")]

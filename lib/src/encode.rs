@@ -10,16 +10,15 @@ const MAX_FRAME_SIZE: u32 = SEEKABLE_MAX_FRAME_SIZE as u32;
 
 /// A policy that controls when new frames are started automatically.
 ///
-/// The uncompressed frame size will never be greater than [`SEEKABLE_MAX_FRAME_SIZE`],
-/// independent of the frame size policy in use. A new frame will always be started if the
-/// uncompressed frame size reaches [`SEEKABLE_MAX_FRAME_SIZE`].
+/// The uncompressed frame size will never get greater than [`SEEKABLE_MAX_FRAME_SIZE`],
+/// independent of the frame size policy in use, i.e. a new frame will **always** be started if
+/// the uncompressed frame size reaches [`SEEKABLE_MAX_FRAME_SIZE`].
 pub enum FrameSizePolicy {
     /// Starts a new frame when the compressed size of the current frame exceeds the specified
     /// size.
     ///
-    /// This will not accurately limit the compressed frame size, it will just start a new frame if
-    /// the actual compressed frame size is equal or exceeds the configured value. The compressed
-    /// frames are typically larger than the given size, depending on the write buffer size.
+    /// This will not accurately limit the compressed frame size, but start a new frame if
+    /// the compressed frame size is equal to or exceeds the configured value.
     Compressed(u32),
     /// Starts a new frame when the uncompressed data of the current frame reaches the specified
     /// size.
@@ -38,10 +37,12 @@ impl Default for FrameSizePolicy {
 ///
 /// # Examples
 ///
+/// Supports builder like function chaining.
+///
 /// ```
 /// use zeekstd::{EncodeOptions, FrameSizePolicy};
 ///
-/// let compressor = EncodeOptions::new()
+/// let raw_encoder = EncodeOptions::new()
 ///     .checksum_flag(false)
 ///     .compression_level(5)
 ///     .frame_size_policy(FrameSizePolicy::Uncompressed(8192))
@@ -63,15 +64,23 @@ impl Default for EncodeOptions<'_> {
 
 impl<'a> EncodeOptions<'a> {
     /// Creates a set of options with default initial values.
+    ///
+    /// # Panics
+    ///
+    /// If allocation of [`CCtx`] fails.
     pub fn new() -> Self {
         Self::with_cctx(CCtx::create())
     }
 
+    /// Tries to create new options.
+    ///
+    /// Returns `None` if allocation of [`CCtx`] fails.
     pub fn try_new() -> Option<Self> {
         let cctx = CCtx::try_create()?;
         Some(Self::with_cctx(cctx))
     }
 
+    /// Create options with the given compression context.
     pub fn with_cctx(cctx: CCtx<'a>) -> Self {
         Self {
             cctx,
@@ -93,26 +102,51 @@ impl<'a> EncodeOptions<'a> {
         self
     }
 
+    /// Whether to write 32 bit checksums at the end of frames.
     pub fn checksum_flag(mut self, flag: bool) -> Self {
         self.checksum_flag = flag;
         self
     }
 
+    /// Sets the compression level used by zstd.
     pub fn compression_level(mut self, level: CompressionLevel) -> Self {
         self.compression_level = level;
         self
     }
 
+    /// Builds a [`RawEncoder`] with the configuration.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the raw encoder cannot be created.
     pub fn into_raw(self) -> Result<RawEncoder<'a>> {
         RawEncoder::with_opts(self)
     }
 
+    /// Builds an [`Encoder`] with the configuration.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the encoder cannot be created.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use zeekstd::EncodeOptions;
+    ///
+    /// let output = File::create("data.zst").unwrap();
+    /// let raw = EncodeOptions::new()
+    ///     .checksum_flag(true)
+    ///     .into_encoder(output)
+    ///     .unwrap();
+    /// ```
     pub fn into_encoder<W>(self, writer: W) -> Result<Encoder<'a, W>> {
         Encoder::with_opts(writer, self)
     }
 }
 
-/// A seekable compressor.
+/// A reusable, seekable encoder.
 ///
 /// Performs low level in-memory seekable compression for streams of data.
 pub struct RawEncoder<'a> {
@@ -129,6 +163,7 @@ impl<'a> RawEncoder<'a> {
         Self::with_opts(EncodeOptions::new())
     }
 
+    /// Creates a new `RawEncoder` with the given options.
     pub fn with_opts(mut opts: EncodeOptions<'a>) -> Result<Self> {
         opts.cctx
             .set_parameter(CParameter::CompressionLevel(opts.compression_level))?;
@@ -144,7 +179,20 @@ impl<'a> RawEncoder<'a> {
         })
     }
 
-    fn compress_with_prefix<'b: 'a>(
+    /// Performs a streaming compression step from `input` to `output`.
+    ///
+    /// Call this repetitively to consume the input stream. Will return two numbers `(i, o)` where
+    /// `i` is the input progress, i.e. the number of bytes that were consumed from `input`, and
+    /// `o` is the output progress, i.e. the number of bytes written to `output`. The caller
+    /// must check if `input` has been entirely consumed. If not, the caller must make some room
+    /// to receive more compressed data, and then present again remaining input data.
+    ///
+    /// If a `prefix` is passed, it will be re-applied to every frame, as tables are discarded at
+    /// end of frame. Referencing a prefix involves building tables, which is a CPU consuming
+    /// operation, with non-negligible impact on latency. This should be avoided for small frame
+    /// sizes. If there is a need to use the same prefix multiple times without long distance mode,
+    /// consider loading a dictionary instead.
+    pub fn compress_with_prefix<'b: 'a>(
         &mut self,
         input: &[u8],
         output: &mut [u8],
@@ -256,6 +304,21 @@ impl RawEncoder<'_> {
         Ok((out_buf.pos(), 0))
     }
 
+    /// Returns a reference to the contained [`SeekTable`].
+    ///
+    /// ```
+    /// use zeekstd::RawEncoder;
+    ///
+    /// let encoder = RawEncoder::new().unwrap();
+    /// let num_frames = encoder.seek_table().num_frames();
+    ///
+    /// assert_eq!(num_frames, 0);
+    /// ```
+    pub fn seek_table(&self) -> &SeekTable {
+        &self.seek_table
+    }
+
+    /// Converts this encoder into the contained [`SeekTable`].
     pub fn into_seek_table(self) -> SeekTable {
         self.seek_table
     }
@@ -263,7 +326,7 @@ impl RawEncoder<'_> {
     /// Resets the current frame.
     ///
     /// This will discard any compression progress tracked for the current frame and resets
-    /// the compression session.
+    /// the compression session. Can be called at any time.
     pub fn reset(&mut self) {
         self.frame_c_size = 0;
         self.frame_d_size = 0;
@@ -273,9 +336,7 @@ impl RawEncoder<'_> {
     }
 }
 
-/// Compresses input data into seekable archives.
-///
-/// The compressed data gets written to an internal writer.
+/// A single-use seekable encoder.
 pub struct Encoder<'a, W> {
     raw: RawEncoder<'a>,
     out_buf: Vec<u8>,
@@ -292,6 +353,7 @@ impl<'a, W> Encoder<'a, W> {
         Self::with_opts(writer, EncodeOptions::new())
     }
 
+    /// Creates a new `Encoder` with the given [`EncodeOptions`].
     pub fn with_opts(writer: W, opts: EncodeOptions<'a>) -> Result<Self> {
         Ok(Self {
             raw: opts.into_raw()?,
@@ -304,6 +366,16 @@ impl<'a, W> Encoder<'a, W> {
 }
 
 impl<'a, W: std::io::Write> Encoder<'a, W> {
+    /// Consumes and compresses input data from `buf`.
+    ///
+    /// Call this repetitively to consume input data. Compressed data gets written to the internal
+    /// writer. Returns the number of bytes consumed from `buf`.
+    ///
+    /// If a `prefix` is provided, it will be re-applied to every frame, as tables are discarded at
+    /// end of frame. Referencing a prefix involves building tables, which is a CPU consuming
+    /// operation, with non-negligible impact on latency. This should be avoided for small frame
+    /// sizes. If there is a need to use the same prefix multiple times without long distance mode,
+    /// consider loading a dictionary instead.
     pub fn compress_with_prefix<'b: 'a>(
         &mut self,
         buf: &[u8],
@@ -332,9 +404,27 @@ impl<'a, W: std::io::Write> Encoder<'a, W> {
 }
 
 impl<W: std::io::Write> Encoder<'_, W> {
-    /// Compresses data from `buf` and writes it to the internal writer.
+    /// Consumes and compresses input data from `buf`.
     ///
-    /// Call this repetitively to consume data. Returns the number of bytes consumed from `buf`.
+    /// Call this repetitively to consume input data. Compressed data gets written to the internal
+    /// writer. Returns the number of bytes consumed from `buf`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use zeekstd::Encoder;
+    ///
+    /// let output = File::create("data.zst")?;
+    /// let mut encoder = Encoder::new(output)?;
+    ///
+    /// let data = b"Hello, ";
+    /// encoder.compress(data)?;
+    /// let data = b"World";
+    /// encoder.compress(data)?;
+    /// # Ok::<(), zeekstd::Error>(())
+    ///
+    /// ```
     pub fn compress(&mut self, buf: &[u8]) -> Result<usize> {
         self.compress_with_prefix(buf, None)
     }
@@ -362,6 +452,22 @@ impl<W: std::io::Write> Encoder<'_, W> {
     ///
     /// Call this to write the seek table to the internal writer. Returns the total number of
     /// compressed bytes written by this `Encoder`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use zeekstd::Encoder;
+    ///
+    /// let output = File::create("data.zst")?;
+    /// let mut encoder = Encoder::new(output)?;
+    ///
+    /// let data = b"Hello";
+    /// encoder.compress(data)?;
+    /// encoder.finish()?;
+    /// # Ok::<(), zeekstd::Error>(())
+    ///
+    /// ```
     pub fn finish(mut self) -> Result<u64> {
         let mut progress = 0;
 
@@ -395,7 +501,7 @@ impl<W: std::io::Write> Encoder<'_, W> {
         }
     }
 
-    /// Get the total number of compressed bytes written to the internal writer so far.
+    /// The total number of compressed bytes written to the internal writer so far.
     pub fn written_compressed(&self) -> u64 {
         self.written_compressed
     }
