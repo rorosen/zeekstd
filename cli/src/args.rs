@@ -69,14 +69,43 @@ impl FromStr for ByteOffset {
     }
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
+pub struct CliFlags {
+    /// Disable output checks.
+    #[arg(short, long, action, global = true)]
+    pub force: bool,
+
+    /// Suppress output.
+    #[arg(short, long, action, global = true)]
+    pub quiet: bool,
+
+    /// Write to STDOUT.
+    #[arg(short = 'c', long, action, global = true)]
+    pub stdout: bool,
+
+    /// Do not show the progress counter.
+    #[arg(long, action, global = true)]
+    pub no_progress: bool,
+
+    /// Disable human-readable formatting for all byte numbers.
+    #[arg(short, long, action, global = true)]
+    pub raw_bytes: bool,
+}
+
+impl CliFlags {
+    pub fn is_with_progress(&self) -> bool {
+        !self.quiet && !self.stdout && !self.no_progress
+    }
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct CompressArgs {
     /// Desired compression level between 1 and 19. Lower numbers provide faster compression,
     /// higher numbers yield better compression ratios.
     #[arg(long, default_value_t = 3)]
     pub compression_level: CompressionLevel,
 
-    /// Don't include frame checksums in the seek table.
+    /// Don't include frame checksums.
     #[arg(long, action)]
     pub no_checksum: bool,
 
@@ -85,16 +114,20 @@ pub struct CompressArgs {
     #[arg(long, default_value = "2M")]
     pub max_frame_size: ByteValue,
 
+    /// Provide a reference point for Zstandard's diff engine.
+    #[arg(long)]
+    pub patch_from: Option<PathBuf>,
+
     /// Input file.
     #[arg(default_value = "-")]
-    pub input_file: PathBuf,
+    pub input_file: String,
 
     /// Write data to the specified file.
     #[arg(short, long)]
     pub output_file: Option<PathBuf>,
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 pub struct DecompressArgs {
     /// The offset (of the uncompressed data) where decompression starts. Accepts the special
     /// values 'start' and 'end'.
@@ -114,8 +147,12 @@ pub struct DecompressArgs {
     #[arg(long, group = "end")]
     pub to_frame: Option<u32>,
 
+    /// Provide a reference point for Zstandard's diff engine.
+    #[arg(long)]
+    pub patch_apply: Option<PathBuf>,
+
     /// Input file.
-    pub input_file: PathBuf,
+    pub input_file: String,
 
     /// Write data to the specified file.
     #[arg(short, long)]
@@ -147,16 +184,12 @@ pub struct ListArgs {
     pub num_frames: Option<u32>,
 
     /// Detailed listing of individual frames, automatically implied when frame boundaries are
-    /// provided.
+    /// specified.
     #[arg(short, long, action)]
     pub detail: bool,
 
-    /// Print human readable byte values like 1KiB.
-    #[arg(short = 'b', long, action)]
-    pub human_bytes: bool,
-
     /// Input file.
-    pub input_file: PathBuf,
+    pub input_file: String,
 }
 
 impl ListArgs {
