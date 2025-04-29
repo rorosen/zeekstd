@@ -140,42 +140,43 @@ impl<'a> RawEncoder<'a> {
         output: &mut [u8],
         prefix: Option<&'b [u8]>,
     ) -> Result<(usize, usize)> {
-        let limit = input.len().min(self.remaining_frame_size());
-        let mut in_buf = InBuffer::around(&input[..limit]);
-        let mut out_buf = OutBuffer::around(output);
-
-        // Reference prefix at the beginning of a frame
-        // TODO: chain when stable
-        if let Some(pref) = prefix {
-            if self.frame_d_size == 0 {
-                self.cctx.ref_prefix(pref)?;
-            }
-        }
-
-        while in_buf.pos() < limit && out_buf.pos() < out_buf.capacity() {
-            self.cctx.compress_stream2(
-                &mut out_buf,
-                &mut in_buf,
-                ZSTD_EndDirective::ZSTD_e_continue,
-            )?;
-        }
-
-        // Casting should always be fine
-        self.frame_c_size += out_buf.pos() as u32;
-        self.frame_d_size += in_buf.pos() as u32;
-
-        let mut out_progress = out_buf.pos();
         if self.is_frame_complete() {
-            while out_progress < output.len() {
-                let (out_prog, n) = self.end_frame(&mut output[out_progress..])?;
-                out_progress += out_prog;
+            let mut progress = 0;
+            while progress < output.len() {
+                let (out_prog, n) = self.end_frame(&mut output[progress..])?;
+                progress += out_prog;
                 if n == 0 {
                     break;
                 }
             }
-        }
 
-        Ok((in_buf.pos(), out_progress))
+            Ok((0, progress))
+        } else {
+            let limit = input.len().min(self.remaining_frame_size());
+            let mut in_buf = InBuffer::around(&input[..limit]);
+            let mut out_buf = OutBuffer::around(output);
+            // Reference prefix at the beginning of a frame
+            // TODO: chain when stable
+            if let Some(pref) = prefix {
+                if self.frame_d_size == 0 {
+                    self.cctx.ref_prefix(pref)?;
+                }
+            }
+
+            while in_buf.pos() < limit && out_buf.pos() < out_buf.capacity() {
+                self.cctx.compress_stream2(
+                    &mut out_buf,
+                    &mut in_buf,
+                    ZSTD_EndDirective::ZSTD_e_continue,
+                )?;
+            }
+
+            // Casting should always be fine
+            self.frame_c_size += out_buf.pos() as u32;
+            self.frame_d_size += in_buf.pos() as u32;
+
+            Ok((in_buf.pos(), out_buf.pos()))
+        }
     }
 
     fn remaining_frame_size(&self) -> usize {
@@ -293,7 +294,11 @@ impl<'a, W> Encoder<'a, W> {
 }
 
 impl<'a, W: std::io::Write> Encoder<'a, W> {
-    pub fn compress_with_prefix<'b: 'a>(&mut self, buf: &[u8], prefix: Option<&'b [u8]>) -> Result<usize> {
+    pub fn compress_with_prefix<'b: 'a>(
+        &mut self,
+        buf: &[u8],
+        prefix: Option<&'b [u8]>,
+    ) -> Result<usize> {
         let mut input_progress = 0;
 
         while input_progress < buf.len() {
