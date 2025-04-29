@@ -1,11 +1,14 @@
-use std::{fs::File, io::Write};
+use std::{
+    fs::{self, File},
+    io::Write,
+};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use indicatif::ProgressBar;
 use zeekstd::{DecodeOptions, Decoder, SeekTable};
-use zstd_safe::DCtx;
+use zstd_safe::{DCtx, DParameter};
 
-use crate::args::DecompressArgs;
+use crate::{args::DecompressArgs, highbit_64};
 
 pub struct Decompressor<'a> {
     decoder: Decoder<'a, File>,
@@ -24,8 +27,23 @@ impl Decompressor<'_> {
             Some(idx) => idx,
             None => seek_table.frame_index_decomp(args.to.as_u64()),
         };
-        let decoder = DecodeOptions::try_new(src)
-            .context("Failed to create decode options")?
+
+        let mut dctx = DCtx::try_create().context("Failed to create decompression context")?;
+        if let Some(patch) = &args.patch_apply {
+            let len = fs::metadata(patch)
+                .context("Failed to get metadata of patch reference file")?
+                .len();
+            let wlog = highbit_64(len + 1024).context("Patch reference file is empty")?;
+            dctx.set_parameter(DParameter::WindowLogMax(wlog))
+                .map_err(|c| {
+                    anyhow!(
+                        "Failed to set max window log: {}",
+                        zstd_safe::get_error_name(c)
+                    )
+                })?;
+        }
+
+        let decoder = DecodeOptions::with_dctx(src, dctx)
             .seek_table(seek_table)
             .lower_frame(lower_frame)
             .upper_frame(upper_frame)

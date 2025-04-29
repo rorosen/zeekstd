@@ -3,27 +3,12 @@ use std::{
     io::{Read, Write},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use indicatif::ProgressBar;
 use zeekstd::{EncodeOptions, Encoder};
 use zstd_safe::{CCtx, CParameter};
 
-use crate::args::CompressArgs;
-
-fn highbit_64(mut v: u64) -> Result<u32> {
-    if v == 0 {
-        bail!("Cannot create patch from empty file");
-    }
-
-    let mut count = 0;
-    v >>= 1;
-    while v > 0 {
-        v >>= 1;
-        count += 1;
-    }
-
-    Ok(count)
-}
+use crate::{args::CompressArgs, highbit_64};
 
 pub struct Compressor<'a, W> {
     encoder: Encoder<'a, W>,
@@ -31,29 +16,27 @@ pub struct Compressor<'a, W> {
 
 impl<W> Compressor<'_, W> {
     pub fn new(args: &CompressArgs, writer: W) -> Result<Self> {
-        let map_err = |msg, c| anyhow!("{msg}: {}", zstd_safe::get_error_name(c));
+        let cctx_err = |msg, c| anyhow!("{msg}: {}", zstd_safe::get_error_name(c));
         let mut cctx = CCtx::try_create().context("Failed to create compression context")?;
 
         cctx.set_parameter(CParameter::CompressionLevel(args.compression_level))
-            .map_err(|c| map_err("Failed to set compression level", c))?;
+            .map_err(|c| cctx_err("Failed to set compression level", c))?;
         cctx.set_parameter(CParameter::ChecksumFlag(!args.no_checksum))
-            .map_err(|c| map_err("Failed to set checksum flag", c))?;
+            .map_err(|c| cctx_err("Failed to set checksum flag", c))?;
 
         if let Some(old) = &args.patch_from {
             let len = fs::metadata(old)
-                .context("Failed to get metadata of patch file")?
+                .context("Failed to get metadata of patch reference file")?
                 .len();
-            let wlog = highbit_64(len + 1024)?;
+            let wlog = highbit_64(len + 1024).context("Patch reference file is empty")?;
             cctx.set_parameter(CParameter::WindowLog(wlog))
-                .map_err(|c| map_err("Failed to set window log", c))?;
+                .map_err(|c| cctx_err("Failed to set window log", c))?;
             cctx.set_parameter(CParameter::EnableLongDistanceMatching(true))
-                .map_err(|c| map_err("Failed to enable long distance matching", c))?;
+                .map_err(|c| cctx_err("Failed to enable long distance matching", c))?;
         }
 
         let encoder = EncodeOptions::with_cctx(cctx)
-            .frame_size_policy(zeekstd::FrameSizePolicy::Uncompressed(
-                args.max_frame_size.as_u32(),
-            ))
+            .frame_size_policy(args.to_frame_size_policy())
             .into_encoder(writer);
 
         Ok(Self { encoder })

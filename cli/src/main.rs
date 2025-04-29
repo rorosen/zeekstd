@@ -8,6 +8,21 @@ mod command;
 mod compress;
 mod decompress;
 
+fn highbit_64(mut v: u64) -> Option<u32> {
+    if v == 0 {
+        return None;
+    }
+
+    let mut count = 0;
+    v >>= 1;
+    while v > 0 {
+        v >>= 1;
+        count += 1;
+    }
+
+    Some(count)
+}
+
 /// Compress and decompress data using the Zstandard Seekable Format.
 #[derive(Debug, Parser)]
 #[command(version, about)]

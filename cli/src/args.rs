@@ -2,7 +2,7 @@ use std::{path::PathBuf, str::FromStr};
 
 use anyhow::bail;
 use clap::Parser;
-use zeekstd::{CompressionLevel, SeekTable};
+use zeekstd::{CompressionLevel, FrameSizePolicy, SeekTable};
 
 #[derive(Debug, Clone)]
 pub struct ByteValue(u32);
@@ -114,6 +114,10 @@ pub struct CompressArgs {
     #[arg(long, default_value = "2M")]
     pub max_frame_size: ByteValue,
 
+    /// Apply the max frame size to compressed frame size instead of uncompressed frame size.
+    #[arg(long, action)]
+    pub frame_size_compressed: bool,
+
     /// Provide a reference point for Zstandard's diff engine.
     #[arg(long)]
     pub patch_from: Option<PathBuf>,
@@ -125,6 +129,16 @@ pub struct CompressArgs {
     /// Write data to the specified file.
     #[arg(short, long)]
     pub output_file: Option<PathBuf>,
+}
+
+impl CompressArgs {
+    pub fn to_frame_size_policy(&self) -> FrameSizePolicy {
+        if self.frame_size_compressed {
+            FrameSizePolicy::Compressed(self.max_frame_size.as_u32())
+        } else {
+            FrameSizePolicy::Uncompressed(self.max_frame_size.as_u32())
+        }
+    }
 }
 
 #[derive(Debug, Parser, Clone)]
