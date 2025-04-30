@@ -1,7 +1,4 @@
-use std::{
-    fs::{self, File},
-    io::Write,
-};
+use std::{fs::File, io::Write};
 
 use anyhow::{Context, Result, anyhow};
 use indicatif::ProgressBar;
@@ -15,7 +12,7 @@ pub struct Decompressor<'a> {
 }
 
 impl Decompressor<'_> {
-    pub fn new(args: &DecompressArgs) -> Result<Self> {
+    pub fn new(args: &DecompressArgs, prefix_len: Option<u64>) -> Result<Self> {
         let mut src = File::open(&args.input_file).context("Failed to open input file")?;
         let seek_table =
             SeekTable::from_seekable(&mut src).context("Failed to parse seek table")?;
@@ -29,12 +26,8 @@ impl Decompressor<'_> {
         };
 
         let mut dctx = DCtx::try_create().context("Failed to create decompression context")?;
-        if let Some(patch) = &args.patch_apply {
-            let len = fs::metadata(patch)
-                .context("Failed to get metadata of patch reference file")?
-                .len();
-            let wlog = highbit_64(len + 1024).context("Patch reference file is empty")?;
-            dctx.set_parameter(DParameter::WindowLogMax(wlog))
+        if let Some(len) = prefix_len {
+            dctx.set_parameter(DParameter::WindowLogMax(highbit_64(len)))
                 .map_err(|c| {
                     anyhow!(
                         "Failed to set max window log: {}",

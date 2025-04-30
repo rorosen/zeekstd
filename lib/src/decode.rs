@@ -8,7 +8,7 @@ use crate::{error::Result, seek_table::SeekTable, seekable::Seekable};
 ///
 /// # Examples
 ///
-/// Supports builder like function chaining.
+/// Supports builder like chaining.
 ///
 /// ```no_run
 /// use std::fs::File;
@@ -65,6 +65,9 @@ impl<'a, S> DecodeOptions<'a, S> {
     }
 
     /// Sets the [`SeekTable`] for this options.
+    ///
+    /// If a seek table is set, it will be used directly during decompression instead of parsing
+    /// the seek table from the seekable `src`.
     pub fn seek_table(mut self, seek_table: SeekTable) -> Self {
         self.seek_table = Some(seek_table);
         self
@@ -76,7 +79,7 @@ impl<'a, S> DecodeOptions<'a, S> {
         self
     }
 
-    /// Sets the last frame that gets included in decompression.
+    /// Sets the last frame that is included in decompression.
     pub fn upper_frame(mut self, index: u32) -> Self {
         self.upper_frame = Some(index);
         self
@@ -108,6 +111,8 @@ pub struct Decoder<'a, S> {
 
 impl<'a, S: Seekable> Decoder<'a, S> {
     /// Creates a new `Decoder` with default parameters and `src` as source.
+    ///
+    /// This is equivalent to calling `DecodeOptions::new(src).into_decoder()`.
     pub fn new(src: S) -> Result<Self> {
         Self::with_opts(DecodeOptions::new(src))
     }

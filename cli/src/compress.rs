@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    io::{Read, Write},
-};
+use std::io::{Read, Write};
 
 use anyhow::{Context, Result, anyhow};
 use indicatif::ProgressBar;
@@ -15,16 +12,12 @@ pub struct Compressor<'a, W> {
 }
 
 impl<W> Compressor<'_, W> {
-    pub fn new(args: &CompressArgs, writer: W) -> Result<Self> {
+    pub fn new(args: &CompressArgs, prefix_len: Option<u64>, writer: W) -> Result<Self> {
         let cctx_err = |msg, c| anyhow!("{msg}: {}", zstd_safe::get_error_name(c));
         let mut cctx = CCtx::try_create().context("Failed to create compression context")?;
 
-        if let Some(old) = &args.patch_from {
-            let len = fs::metadata(old)
-                .context("Failed to get metadata of patch reference file")?
-                .len();
-            let wlog = highbit_64(len + 1024).context("Patch reference file is empty")?;
-            cctx.set_parameter(CParameter::WindowLog(wlog))
+        if let Some(len) = prefix_len {
+            cctx.set_parameter(CParameter::WindowLog(highbit_64(len)))
                 .map_err(|c| cctx_err("Failed to set window log", c))?;
             cctx.set_parameter(CParameter::EnableLongDistanceMatching(true))
                 .map_err(|c| cctx_err("Failed to enable long distance matching", c))?;

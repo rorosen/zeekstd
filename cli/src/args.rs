@@ -1,8 +1,12 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{fs, path::PathBuf, str::FromStr};
 
 use anyhow::bail;
 use clap::Parser;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use zeekstd::{CompressionLevel, FrameSizePolicy, SeekTable};
+
+// 128 MiB
+const MMAP_THRESHOLD: u64 = 0x100000;
 
 #[derive(Debug, Clone)]
 pub struct ByteValue(u32);
@@ -90,11 +94,41 @@ pub struct CliFlags {
     /// Disable human-readable formatting for all byte numbers.
     #[arg(short, long, action, global = true)]
     pub raw_bytes: bool,
+
+    /// Force memory-mapping prefix (patch) files.
+    #[arg(long, action, global = true)]
+    pub mmap_prefix: bool,
+
+    /// Force disable memory-mapping prefix (patch) files.
+    #[arg(long, action, global = true)]
+    pub no_mmap_prefix: bool,
 }
 
 impl CliFlags {
     pub fn is_with_progress(&self) -> bool {
         !self.quiet && !self.stdout && !self.no_progress
+    }
+
+    pub fn progress_bar(&self, in_path: Option<&str>) -> Option<ProgressBar> {
+        self.is_with_progress().then(|| {
+            let len = in_path.and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
+            ProgressBar::with_draw_target(len, ProgressDrawTarget::stderr_with_hz(5)).with_style(
+                ProgressStyle::with_template("{binary_bytes} of {binary_total_bytes}")
+                    .expect("Static template always works"),
+            )
+        })
+    }
+
+    pub fn use_mmap(&self, prefix_len: Option<u64>) -> bool {
+        if self.mmap_prefix {
+            return true;
+        }
+
+        if self.no_mmap_prefix {
+            return false;
+        }
+
+        prefix_len.is_some_and(|l| l >= MMAP_THRESHOLD)
     }
 }
 

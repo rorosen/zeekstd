@@ -37,7 +37,7 @@ impl Default for FrameSizePolicy {
 ///
 /// # Examples
 ///
-/// Supports builder like function chaining.
+/// Supports builder like chaining.
 ///
 /// ```
 /// use zeekstd::{EncodeOptions, FrameSizePolicy};
@@ -72,7 +72,7 @@ impl<'a> EncodeOptions<'a> {
         Self::with_cctx(CCtx::create())
     }
 
-    /// Tries to create new options.
+    /// Tries to create new options with default initial values.
     ///
     /// Returns `None` if allocation of [`CCtx`] fails.
     pub fn try_new() -> Option<Self> {
@@ -114,7 +114,7 @@ impl<'a> EncodeOptions<'a> {
         self
     }
 
-    /// Builds a [`RawEncoder`] with the configuration.
+    /// Creates a [`RawEncoder`] with the configuration.
     ///
     /// # Errors
     ///
@@ -123,7 +123,7 @@ impl<'a> EncodeOptions<'a> {
         RawEncoder::with_opts(self)
     }
 
-    /// Builds an [`Encoder`] with the configuration.
+    /// Creates an [`Encoder`] with the configuration.
     ///
     /// # Errors
     ///
@@ -159,6 +159,8 @@ pub struct RawEncoder<'a> {
 
 impl<'a> RawEncoder<'a> {
     /// Creates a new `RawEncoder` with default parameters.
+    ///
+    /// This is equivalent to calling `EncodeOptions::new().into_raw()`.
     pub fn new() -> Result<Self> {
         Self::with_opts(EncodeOptions::new())
     }
@@ -191,7 +193,7 @@ impl<'a> RawEncoder<'a> {
     /// end of frame. Referencing a prefix involves building tables, which is a CPU consuming
     /// operation, with non-negligible impact on latency. This should be avoided for small frame
     /// sizes. If there is a need to use the same prefix multiple times without long distance mode,
-    /// consider loading a dictionary instead.
+    /// consider loading a dictionary into the compression context instead.
     pub fn compress_with_prefix<'b: 'a>(
         &mut self,
         input: &[u8],
@@ -304,7 +306,7 @@ impl RawEncoder<'_> {
         Ok((out_buf.pos(), 0))
     }
 
-    /// Returns a reference to the contained [`SeekTable`].
+    /// Returns a reference to the internal [`SeekTable`].
     ///
     /// ```
     /// use zeekstd::RawEncoder;
@@ -318,15 +320,15 @@ impl RawEncoder<'_> {
         &self.seek_table
     }
 
-    /// Converts this encoder into the contained [`SeekTable`].
+    /// Converts this encoder into the internal [`SeekTable`].
     pub fn into_seek_table(self) -> SeekTable {
         self.seek_table
     }
 
     /// Resets the current frame.
     ///
-    /// This will discard any compression progress tracked for the current frame and resets
-    /// the compression session. Can be called at any time.
+    /// This will discard any compression progress for the current frame and resets the
+    /// compression session. Can be called at any time.
     pub fn reset(&mut self) {
         self.frame_c_size = 0;
         self.frame_d_size = 0;
@@ -375,7 +377,7 @@ impl<'a, W: std::io::Write> Encoder<'a, W> {
     /// end of frame. Referencing a prefix involves building tables, which is a CPU consuming
     /// operation, with non-negligible impact on latency. This should be avoided for small frame
     /// sizes. If there is a need to use the same prefix multiple times without long distance mode,
-    /// consider loading a dictionary instead.
+    /// consider loading a dictionary into the compression context instead.
     pub fn compress_with_prefix<'b: 'a>(
         &mut self,
         buf: &[u8],

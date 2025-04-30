@@ -2,13 +2,15 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     io::{self, IsTerminal, Read, Write},
+    ops::Deref,
     os::unix::fs::FileTypeExt,
     path::PathBuf,
 };
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
-use indicatif::{HumanBytes, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use indicatif::{HumanBytes, ProgressBar};
+use memmap2::Mmap;
 use zeekstd::SeekTable;
 
 use crate::{
@@ -88,39 +90,45 @@ impl Command {
     pub fn run(self, flags: CliFlags) -> Result<()> {
         let in_path = self.in_path();
         let out_path = self.out_path(flags.stdout);
+        // Always write to terminal in list mode
+        let force_write_stdout = !flags.force && !matches!(self, Self::List(_));
 
-        let writer: Box<dyn Write> = match &out_path {
-            Some(path) => {
-                let meta = fs::metadata(path).ok();
-                if !flags.force
-                    && path.exists()
-                    && !meta.is_some_and(|m| m.file_type().is_char_device())
-                {
-                    if flags.quiet || self.in_path().is_none() {
-                        bail!("{} already exists; not overwritten", path.display());
+        // This is a closure so the writer can be created after the input has been validated
+        let new_writer = || -> Result<Box<dyn Write>> {
+            match &out_path {
+                Some(path) => {
+                    let meta = fs::metadata(path).ok();
+                    if !flags.force
+                        && path.exists()
+                        && !meta.is_some_and(|m| m.file_type().is_char_device())
+                    {
+                        if flags.quiet || in_path.is_none() {
+                            bail!("{} already exists; not overwritten", path.display());
+                        }
+
+                        eprint!("{} already exists; overwrite (y/n) ? ", path.display());
+                        io::stderr().flush()?;
+                        let mut buf = String::new();
+                        io::stdin()
+                            .read_line(&mut buf)
+                            .context("Failed to read stdin")?;
+                        if buf.trim_end() != "y" {
+                            bail!("{} already exists", path.display());
+                        }
                     }
 
-                    eprint!("{} already exists; overwrite (y/n) ? ", path.display());
-                    io::stderr().flush()?;
-                    let mut buf = String::new();
-                    io::stdin()
-                        .read_line(&mut buf)
-                        .context("Failed to read stdin")?;
-                    if buf.trim_end() != "y" {
-                        bail!("{} already exists", path.display());
+                    File::create(path)
+                        .context("Failed to open output file")
+                        .map(|f| Box::new(f) as Box<dyn Write>)
+                }
+                None => {
+                    let stdout = io::stdout();
+                    if !force_write_stdout && stdout.is_terminal() {
+                        bail!("stdout is a terminal, aborting");
                     }
-                }
 
-                Box::new(File::create(path).context("Failed to open output file")?)
-            }
-            None => {
-                let stdout = io::stdout();
-                // Always write to terminal in list mode
-                if !flags.force && !matches!(self, Self::List(_)) && stdout.is_terminal() {
-                    bail!("stdout is a terminal, aborting");
+                    Ok(Box::new(stdout))
                 }
-
-                Box::new(stdout)
             }
         };
 
@@ -138,16 +146,20 @@ impl Command {
                     }
                     None => Box::new(io::stdin()),
                 };
+                let prefix_len = args
+                    .patch_from
+                    .as_ref()
+                    .and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
+                let compressor = Compressor::new(&args, prefix_len, new_writer()?)?;
                 let mode = ExecMode::Compress {
                     reader,
-                    compressor: Compressor::new(&args, writer)?,
+                    compressor,
                     prefix: args.patch_from,
+                    mmap_prefix: flags.use_mmap(prefix_len),
                     out_path: out_path
                         .and_then(|p| p.to_str().map(|s| s.into()))
                         .unwrap_or("STDOUT".into()),
-                    bar: flags
-                        .is_with_progress()
-                        .then(|| with_bar(in_path.as_deref())),
+                    bar: flags.progress_bar(in_path.as_deref()),
                 };
 
                 Executor {
@@ -157,13 +169,19 @@ impl Command {
                 }
             }
             Command::Decompress(args) => {
+                let prefix_len = args
+                    .patch_apply
+                    .as_ref()
+                    .and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
+                let decompressor = Decompressor::new(&args, prefix_len)?;
+                let writer = new_writer()?;
+
                 let mode = ExecMode::Decompress {
-                    decompressor: Decompressor::new(&args)?,
+                    decompressor,
                     writer,
                     prefix: args.patch_apply,
-                    bar: flags
-                        .is_with_progress()
-                        .then(|| with_bar(in_path.as_deref())),
+                    mmap_prefix: flags.use_mmap(prefix_len),
+                    bar: flags.progress_bar(in_path.as_deref()),
                 };
 
                 Executor {
@@ -203,6 +221,7 @@ enum ExecMode<'a> {
         reader: Box<dyn Read>,
         compressor: Compressor<'a, Box<dyn Write>>,
         prefix: Option<PathBuf>,
+        mmap_prefix: bool,
         out_path: String,
         bar: Option<ProgressBar>,
     },
@@ -210,6 +229,7 @@ enum ExecMode<'a> {
         decompressor: Decompressor<'a>,
         writer: Box<dyn Write>,
         prefix: Option<PathBuf>,
+        mmap_prefix: bool,
         bar: Option<ProgressBar>,
     },
     List {
@@ -233,15 +253,14 @@ impl Executor<'_> {
                 mut reader,
                 compressor,
                 prefix,
+                mmap_prefix,
                 out_path,
                 bar,
             } => {
-                let pref = prefix
-                    .map(|p| fs::read(&p))
-                    .transpose()
-                    .context("Failed to read prefix to create patch")?;
+                let prefix = Prefix::new(prefix, mmap_prefix)
+                    .context("Failed to load prefix (patch) file")?;
                 let (read, written) =
-                    compressor.compress_reader(&mut reader, pref.as_deref(), bar.as_ref())?;
+                    compressor.compress_reader(&mut reader, prefix.as_deref(), bar.as_ref())?;
 
                 eprintln!(
                     "{in_path} : {ratio:.2}% ( {bytes_read} => {bytes_written}, {out_path})",
@@ -249,21 +268,19 @@ impl Executor<'_> {
                     ratio = 100. / read as f64 * written as f64,
                     bytes_read = (self.byte_fmt)(read),
                     bytes_written = (self.byte_fmt)(written),
-                    out_path = out_path,
                 );
             }
             ExecMode::Decompress {
                 decompressor,
                 mut writer,
                 prefix,
+                mmap_prefix,
                 bar,
             } => {
-                let pref = prefix
-                    .map(|p| fs::read(&p))
-                    .transpose()
-                    .context("Failed to read prefix to create patch")?;
+                let prefix = Prefix::new(prefix, mmap_prefix)
+                    .context("Failed to load prefix (patch) file")?;
                 let written =
-                    decompressor.decompress_into(&mut writer, pref.as_deref(), bar.as_ref())?;
+                    decompressor.decompress_into(&mut writer, prefix.as_deref(), bar.as_ref())?;
 
                 eprintln!(
                     "{in_path} : {bytes_written}",
@@ -286,6 +303,42 @@ impl Executor<'_> {
         };
 
         Ok(())
+    }
+}
+
+enum Prefix {
+    File(Vec<u8>),
+    Mmap(Mmap),
+}
+
+impl Prefix {
+    fn new(prefix: Option<PathBuf>, use_mmap: bool) -> Result<Option<Self>> {
+        if let Some(path) = prefix {
+            let mut file = File::open(&path)?;
+            if use_mmap {
+                let mmap = unsafe { Mmap::map(&file)? };
+                Ok(Some(Self::Mmap(mmap)))
+            } else {
+                let size = file.metadata().map(|m| m.len() as usize).ok();
+                let mut bytes = Vec::new();
+                bytes.try_reserve_exact(size.unwrap_or(0))?;
+                file.read_to_end(&mut bytes)?;
+                Ok(Some(Self::File(bytes)))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl Deref for Prefix {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Prefix::File(items) => items,
+            Prefix::Mmap(mmap) => mmap,
+        }
     }
 }
 
@@ -355,12 +408,4 @@ fn list_frames(
     print!("{buf}");
 
     Ok(())
-}
-
-fn with_bar(in_path: Option<&str>) -> ProgressBar {
-    let len = in_path.and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
-    ProgressBar::with_draw_target(len, ProgressDrawTarget::stderr_with_hz(5)).with_style(
-        ProgressStyle::with_template("{binary_bytes} of {binary_total_bytes}")
-            .expect("Static template always works"),
-    )
 }

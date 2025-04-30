@@ -9,7 +9,7 @@ decompress at most a frame's worth of extra data, instead of the entire archive.
 
 ## Compression
 
-Use the `Encoder` struct for streaming data compression.
+Use an `Encoder` for data compression.
 
 ```rust no_run
 use std::{fs::File, io};
@@ -17,7 +17,7 @@ use zeekstd::Encoder;
 
 fn main() -> zeekstd::Result<()> {
     let mut input = File::open("foo")?;
-    let output = File::create("foo.zst")?;
+    let output = File::create("seekable.zst")?;
     let mut encoder = Encoder::new(output)?;
     io::copy(&mut input, &mut encoder)?;
     // End compression and write the seek table
@@ -29,7 +29,7 @@ fn main() -> zeekstd::Result<()> {
 
 ## Decompression
 
-Streaming decompression can be achieved using the `Decoder` struct.
+Decompression can be achieved with a `Decoder`.
 
 ```rust no_run
 use std::{fs::File, io};
@@ -37,7 +37,7 @@ use zeekstd::Decoder;
 
 fn main() -> zeekstd::Result<()> {
     let input = File::open("seekable.zst")?;
-    let mut output = File::create("data")?;
+    let mut output = File::create("decompressed")?;
     let mut decoder = Decoder::new(input)?;
     io::copy(&mut decoder, &mut output)?;
 
