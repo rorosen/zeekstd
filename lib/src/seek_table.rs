@@ -23,10 +23,10 @@ macro_rules! write_le32 {
         if $write_pos < $offset + 4 {
             // Minimum of remaining buffer space and number of bytes we want to write
             let len = usize::min($buf.len() - $buf_pos, $offset + 4 - $write_pos);
-            // The value offset, > 0 if we wrote the value partially in a previous run (because of
+            // val_offset is > 0 if we wrote the value partially in a previous run (because of
             // little buffer space remaining)
             let val_offset = $write_pos - $offset;
-            // Copy the importnat parts of value to buf
+            // Copy the important parts of value to buf
             $buf[$buf_pos..$buf_pos + len]
                 .copy_from_slice(&$value.to_le_bytes()[val_offset..val_offset + len]);
             $buf_pos += len;
@@ -169,7 +169,7 @@ impl Parser {
         if num_frames > SEEKABLE_MAX_FRAMES {
             return Err(Error::frame_index_too_large());
         }
-        let num_frames = usize::try_from(num_frames).expect("Number of frames never exceeds u32");
+        let num_frames = usize::try_from(num_frames).expect("Number of frames never exceeds usize");
         let size_per_frame: usize = if with_checksum { 12 } else { 8 };
         let seek_table_size =
             num_frames * size_per_frame + SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE;
@@ -188,7 +188,7 @@ impl Parser {
         if read_le32!(buf, 0) != SKIPPABLE_MAGIC_NUMBER {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown));
         }
-        let size = usize::try_from(read_le32!(buf, 4)).expect("u32 fits in usize");
+        let size = usize::try_from(read_le32!(buf, 4)).expect("frame size fits in usize");
         if size + SKIPPABLE_HEADER_SIZE != self.seek_table_size {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected));
         }
@@ -196,6 +196,9 @@ impl Parser {
         Ok(())
     }
 
+    /// Parses entries from `buf`.
+    ///
+    /// Only parses complete frames, returns the number of bytes consumed.
     fn parse_entries(&mut self, buf: &[u8]) -> usize {
         let Self {
             entries,
@@ -206,40 +209,35 @@ impl Parser {
 
         let mut pos: usize = 0;
         while entries.0.len() < self.num_frames {
-            // TODO: consume everything up to buf.len()?
             if pos + self.size_per_frame > buf.len() {
                 return pos;
             }
 
-            let entry = Entry {
+            entries.0.push(Entry {
                 c_offset: *c_offset,
                 d_offset: *d_offset,
-            };
-            entries.0.push(entry);
+            });
             // Casting u32 to u64 is fine
             *c_offset += read_le32!(buf, pos) as u64;
             *d_offset += read_le32!(buf, pos + 4) as u64;
             pos += self.size_per_frame;
         }
 
-        if entries.0.len() == self.num_frames {
-            // Add a final entry that marks the end of the last frame
-            let entry = Entry {
-                c_offset: *c_offset,
-                d_offset: *d_offset,
-            };
-            entries.0.push(entry);
-        }
+        // Add a final entry that marks the end of the last frame
+        entries.0.push(Entry {
+            c_offset: *c_offset,
+            d_offset: *d_offset,
+        });
 
         pos
     }
 
     fn verify(&self) -> Result<()> {
         if self.entries.0.len() == self.num_frames + 1 {
-            return Ok(());
+            Ok(())
+        } else {
+            Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected))
         }
-
-        Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected))
     }
 }
 
@@ -302,8 +300,8 @@ impl SeekTable {
         let mut parser = Parser::from_integrity(&footer)?;
         src.seek_to_seek_table_start(parser.seek_table_size)?;
 
-        let cap = 8192.min(parser.seek_table_size);
-        let mut buf = vec![0u8; cap];
+        let len = 8192.min(parser.seek_table_size + SKIPPABLE_HEADER_SIZE);
+        let mut buf = vec![0u8; len];
         let mut read = 0;
         while read < 8 {
             let n = src.read(&mut buf)?;
@@ -313,14 +311,17 @@ impl SeekTable {
             }
             read += n;
         }
-        parser.verify_skippable_header(&buf[..8])?;
-        buf.drain(..8);
+        parser.verify_skippable_header(&buf[..SKIPPABLE_HEADER_SIZE])?;
+        buf.drain(..SKIPPABLE_HEADER_SIZE);
+        let len = buf.len();
 
         loop {
-            if parser.parse_entries(&buf) == 0 {
+            let n = parser.parse_entries(&buf);
+            if n == 0 {
                 break;
             }
-            if src.read(&mut buf)? == 0 {
+            buf.copy_within(n.., 0);
+            if src.read(&mut buf[len - n..])? == 0 {
                 break;
             };
         }
@@ -359,8 +360,9 @@ impl SeekTable {
 
     /// Parses a seek table from a reader.
     ///
-    /// The passed `reader` should only contain the seek table, not the complete seekable archive.
-    /// Will only work if the seekable integrity field is present as a header.
+    /// The passed `reader` should only read the seek table, not the complete seekable archive.
+    /// Creating a `SeekTable` from a reader only works with seek tables that have the seekable
+    /// integrity field placed as a header.
     ///
     /// # Errors
     ///
@@ -372,16 +374,20 @@ impl SeekTable {
         let mut parser = Parser::from_integrity(&buf[SKIPPABLE_HEADER_SIZE..])?;
         parser.verify_skippable_header(&buf)?;
 
-        let cap = 8192.min(parser.seek_table_size);
-        let mut buf = vec![0u8; cap];
+        let len = 8192.min(parser.seek_table_size);
+        let mut buf = vec![0u8; len];
 
+        let mut offset = 0;
         loop {
-            if reader.read(&mut buf)? == 0 {
+            if reader.read(&mut buf[offset..])? == 0 {
                 break;
             };
-            if parser.parse_entries(&buf) == 0 {
+            let n = parser.parse_entries(&buf);
+            if n == 0 {
                 break;
             }
+            buf.copy_within(n.., 0);
+            offset = buf.len() - n;
         }
         parser.verify()?;
 
@@ -901,15 +907,21 @@ mod tests {
     fn serde_cycle_with_head_integrity() {
         let st = seek_table();
         let mut ser = st.clone().into_head_serializer();
+
+        let mut buf = vec![0; ser.encoded_len()];
+        let n = ser.write_into(&mut buf);
+        assert_eq!(n, ser.encoded_len());
+
+        let from_bytes = SeekTable::from_bytes(&buf).unwrap();
+        assert_eq!(from_bytes, st);
+
+        ser.reset();
         let mut seek_table = Cursor::new(Vec::with_capacity(ser.encoded_len()));
         let n = io::copy(&mut ser, &mut seek_table).unwrap();
         assert_eq!(n, ser.encoded_len() as u64);
 
-        let from_bytes = SeekTable::from_bytes(seek_table.get_ref()).unwrap();
         seek_table.set_position(0);
         let from_reader = SeekTable::from_reader(&mut seek_table).unwrap();
-
-        assert_eq!(from_bytes, st);
         assert_eq!(from_reader, st);
     }
 
@@ -917,15 +929,22 @@ mod tests {
     fn serde_cycle_with_foot_integrity() {
         let st = seek_table();
         let mut ser = st.clone().into_foot_serializer();
+
+        let mut buf = vec![0; ser.encoded_len()];
+        let n = ser.write_into(&mut buf);
+        assert_eq!(n, ser.encoded_len());
+
+        let from_bytes = SeekTable::from_bytes(&buf).unwrap();
+        assert_eq!(from_bytes, st);
+
+        ser.reset();
         let mut seek_table = Cursor::new(Vec::with_capacity(ser.encoded_len()));
         let n = io::copy(&mut ser, &mut seek_table).unwrap();
         assert_eq!(n, ser.encoded_len() as u64);
 
-        let from_seekable = SeekTable::from_seekable(&mut seek_table).unwrap();
-        let from_bytes = SeekTable::from_bytes(seek_table.get_ref()).unwrap();
-
-        assert_eq!(from_seekable, st);
-        assert_eq!(from_bytes, st);
+        seek_table.set_position(0);
+        let from_reader = SeekTable::from_seekable(&mut seek_table).unwrap();
+        assert_eq!(from_reader, st);
     }
 
     #[test]
