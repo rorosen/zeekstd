@@ -259,3 +259,119 @@ impl<S: Seekable> std::io::Read for Decoder<'_, S> {
         self.decompress(buf).map_err(std::io::Error::other)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, BufRead, Cursor, Write};
+
+    use crate::{EncodeOptions, FrameSizePolicy};
+
+    use super::*;
+
+    const LINE_LEN: u32 = 23;
+    const LINES_IN_DOC: u32 = 200_384;
+
+    #[test]
+    fn partly_decompression() {
+        const LINES_IN_FRAME: u32 = 1143;
+
+        let mut input = Cursor::new(vec![]);
+        for i in 0..LINES_IN_DOC {
+            writeln!(&mut input, "Hello from line {:06}", i).unwrap();
+        }
+
+        input.set_position(0);
+        let mut seekable = Cursor::new(vec![]);
+        let mut encoder = EncodeOptions::new()
+            .frame_size_policy(FrameSizePolicy::Uncompressed(LINE_LEN * LINES_IN_FRAME))
+            .into_encoder(&mut seekable)
+            .unwrap();
+
+        // Compress the input
+        io::copy(&mut input, &mut encoder).unwrap();
+        let n = encoder.finish().unwrap();
+        assert_eq!(n, seekable.position());
+
+        let mut decoder = Decoder::new(seekable).unwrap();
+
+        // Add one for the last frame
+        let num_frames = LINES_IN_DOC / LINES_IN_FRAME + 1;
+        assert_eq!(num_frames, decoder.num_frames());
+
+        let mut output = Cursor::new(vec![]);
+        io::copy(&mut decoder, &mut output).unwrap();
+        output.set_position(0);
+
+        let mut num_line = 0;
+        for line in output.clone().lines().map(|l| l.unwrap()) {
+            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            num_line += 1;
+        }
+        assert_eq!(num_line, LINES_IN_DOC);
+        assert_eq!(input.get_ref(), output.get_ref());
+
+        // Decompress until frame 6 (inclusive)
+        decoder.set_lower_frame(0);
+        decoder.set_upper_frame(6);
+        // Dummy decompression so we can reset something
+        decoder.decompress(&mut [0; 1024]).unwrap();
+        decoder.reset();
+        // Real decompression
+        let mut output = Cursor::new(vec![]);
+        io::copy(&mut decoder, &mut output).unwrap();
+        output.set_position(0);
+        let mut num_line = 0;
+        for line in output.lines().map(|l| l.unwrap()) {
+            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            num_line += 1;
+        }
+        assert_eq!(num_line, 7 * LINES_IN_FRAME);
+
+        // Decompress the last 13 frames
+        decoder.set_lower_frame(num_frames - 14);
+        decoder.set_upper_frame(num_frames - 1);
+        let mut output = Cursor::new(vec![]);
+        io::copy(&mut decoder, &mut output).unwrap();
+        output.set_position(0);
+        let mut num_line = (num_frames - 14) * LINES_IN_FRAME;
+        for line in output.lines().map(|l| l.unwrap()) {
+            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            num_line += 1;
+        }
+        assert_eq!(num_line, LINES_IN_DOC);
+
+        // Start frame greater end frame, expect zero bytes read
+        decoder.set_lower_frame(9);
+        decoder.set_upper_frame(8);
+        let mut output = Cursor::new(vec![]);
+        let n = io::copy(&mut decoder, &mut output).unwrap();
+        assert_eq!(0, n);
+        output.set_position(0);
+        assert_eq!(0, output.lines().collect::<Vec<_>>().len());
+
+        // Start frame index too large
+        decoder.set_lower_frame(num_frames);
+        let mut output = Cursor::new(vec![]);
+        assert!(io::copy(&mut decoder, &mut output).is_err());
+
+        // End frame index too large
+        decoder.set_lower_frame(0);
+        decoder.set_upper_frame(num_frames);
+        let mut output = Cursor::new(vec![]);
+        assert!(io::copy(&mut decoder, &mut output).is_err());
+
+        // Decompress all frames
+        decoder.set_upper_frame(num_frames - 1);
+        let mut output = Cursor::new(vec![]);
+        io::copy(&mut decoder, &mut output).unwrap();
+        output.set_position(0);
+
+        let mut num_line = 0;
+        for line in output.clone().lines().map(|l| l.unwrap()) {
+            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            num_line += 1;
+        }
+        assert_eq!(num_line, LINES_IN_DOC);
+        assert_eq!(input.get_ref(), output.get_ref());
+    }
+}

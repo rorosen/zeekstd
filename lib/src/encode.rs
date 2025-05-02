@@ -572,5 +572,29 @@ impl<W> Deref for Encoder<'_, W> {
 
 #[cfg(test)]
 mod tests {
-    //TODO: test resetting
+    use super::*;
+
+    #[test]
+    fn raw_decoder_reset() {
+        let mut encoder = RawEncoder::new().unwrap();
+        let mut buf = vec![0; 1024];
+        encoder.compress(b"Hello", &mut buf).unwrap();
+        encoder.end_frame(&mut buf).unwrap();
+        assert_eq!(encoder.num_frames(), 1);
+        let first_st = encoder.to_seek_table();
+
+        // Build up some frame progress to reset it later
+        encoder.compress(b"Bye", &mut [0; 128]).unwrap();
+
+        encoder.reset_frame();
+        encoder.reset_seek_table();
+        assert_eq!(encoder.num_frames(), 0);
+
+        encoder.compress(b"Hello", &mut buf).unwrap();
+        encoder.end_frame(&mut buf).unwrap();
+        assert_eq!(encoder.num_frames(), 1);
+        let second_st = encoder.to_seek_table();
+
+        debug_assert_eq!(first_st, second_st);
+    }
 }

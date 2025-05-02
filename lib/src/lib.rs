@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn seekable_cycle() -> Result<()> {
+    fn cycle() -> Result<()> {
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = Encoder::new(&mut seekable)?;
@@ -153,104 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn seekable_partly_decompression() {
-        const LINES_IN_FRAME: u32 = 1143;
-
-        let mut input = generate_input(LINES_IN_DOC);
-        let mut seekable = Cursor::new(vec![]);
-        let mut encoder = EncodeOptions::new()
-            .frame_size_policy(FrameSizePolicy::Uncompressed(LINE_LEN * LINES_IN_FRAME))
-            .into_encoder(&mut seekable)
-            .unwrap();
-
-        // Compress the input
-        io::copy(&mut input, &mut encoder).unwrap();
-        let n = encoder.finish().unwrap();
-        assert_eq!(n, seekable.position());
-
-        let mut decoder = Decoder::new(seekable).unwrap();
-
-        // Add one for the last frame
-        let num_frames = LINES_IN_DOC / LINES_IN_FRAME + 1;
-        assert_eq!(num_frames, decoder.num_frames());
-
-        let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
-        io::copy(&mut decoder, &mut output).unwrap();
-        output.set_position(0);
-
-        let mut num_line = 0;
-        for line in output.clone().lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
-            num_line += 1;
-        }
-        assert_eq!(num_line, LINES_IN_DOC);
-        assert_eq!(input.get_ref(), output.get_ref());
-
-        // Decompress until frame 6 (inclusive)
-        decoder.set_lower_frame(0);
-        decoder.set_upper_frame(6);
-        let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_FRAME) as usize * 7));
-        io::copy(&mut decoder, &mut output).unwrap();
-        output.set_position(0);
-        let mut num_line = 0;
-        for line in output.lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
-            num_line += 1;
-        }
-        assert_eq!(num_line, 7 * LINES_IN_FRAME);
-
-        // Decompress the last 13 frames
-        decoder.set_lower_frame(num_frames - 14);
-        decoder.set_upper_frame(num_frames - 1);
-        let mut output = Cursor::new(Vec::with_capacity(
-            (LINE_LEN * LINES_IN_FRAME) as usize * 13,
-        ));
-        io::copy(&mut decoder, &mut output).unwrap();
-        output.set_position(0);
-        let mut num_line = (num_frames - 14) * LINES_IN_FRAME;
-        for line in output.lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
-            num_line += 1;
-        }
-        assert_eq!(num_line, LINES_IN_DOC);
-
-        // Start frame greater end frame, expect zero bytes read
-        decoder.set_lower_frame(9);
-        decoder.set_upper_frame(8);
-        let mut output = Cursor::new(vec![]);
-        let n = io::copy(&mut decoder, &mut output).unwrap();
-        assert_eq!(0, n);
-        output.set_position(0);
-        assert_eq!(0, output.lines().collect::<Vec<_>>().len());
-
-        // Start frame index too large
-        decoder.set_lower_frame(num_frames);
-        let mut output = Cursor::new(vec![]);
-        assert!(io::copy(&mut decoder, &mut output).is_err());
-
-        // End frame index too large
-        decoder.set_lower_frame(0);
-        decoder.set_upper_frame(num_frames);
-        let mut output = Cursor::new(vec![]);
-        assert!(io::copy(&mut decoder, &mut output).is_err());
-
-        // Decompress all frames
-        decoder.set_upper_frame(num_frames - 1);
-        let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
-        io::copy(&mut decoder, &mut output).unwrap();
-        output.set_position(0);
-
-        let mut num_line = 0;
-        for line in output.clone().lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
-            num_line += 1;
-        }
-        assert_eq!(num_line, LINES_IN_DOC);
-        assert_eq!(input.get_ref(), output.get_ref());
-    }
-
-    #[test]
-    fn seekable_patch_cycle() -> Result<()> {
+    fn patch_cycle() -> Result<()> {
         let old = generate_input(LINES_IN_DOC - 1);
         let new = generate_input(LINES_IN_DOC);
         let mut patch = Cursor::new(vec![]);
@@ -312,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn stand_alone_seek_table() {
+    fn cycle_with_stand_alone_seek_table() {
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = Encoder::new(&mut seekable).unwrap();
