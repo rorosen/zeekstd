@@ -1,9 +1,11 @@
+use std::ops::Deref;
+
 use zstd_safe::{
     CCtx, CParameter, CompressionLevel, InBuffer, OutBuffer, ResetDirective,
     zstd_sys::ZSTD_EndDirective,
 };
 
-use crate::{SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result};
+use crate::{SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result, seek_table::SeekTableFormat};
 
 // Constant value always can be casted
 const MAX_FRAME_SIZE: u32 = SEEKABLE_MAX_FRAME_SIZE as u32;
@@ -13,6 +15,7 @@ const MAX_FRAME_SIZE: u32 = SEEKABLE_MAX_FRAME_SIZE as u32;
 /// The uncompressed frame size will never get greater than [`SEEKABLE_MAX_FRAME_SIZE`],
 /// independent of the frame size policy in use, i.e. a new frame will **always** be started if
 /// the uncompressed frame size reaches [`SEEKABLE_MAX_FRAME_SIZE`].
+#[derive(Debug, Clone)]
 pub enum FrameSizePolicy {
     /// Starts a new frame when the compressed size of the current frame exceeds the specified
     /// size.
@@ -149,6 +152,20 @@ impl<'a> EncodeOptions<'a> {
 /// A reusable, seekable encoder.
 ///
 /// Performs low level in-memory seekable compression for streams of data.
+///
+/// # Example
+///
+/// ```
+/// use zeekstd::{FrameSizePolicy, RawEncoder};
+///
+/// let mut encoder = RawEncoder::new()?;
+/// let mut buf = vec![0; 1024];
+///
+/// encoder.compress(b"Hello, World!", &mut buf)?;
+/// encoder.end_frame(&mut buf)?;
+///
+/// # Ok::<(), zeekstd::Error>(())
+/// ```
 pub struct RawEncoder<'a> {
     cctx: CCtx<'a>,
     frame_policy: FrameSizePolicy,
@@ -165,7 +182,7 @@ impl<'a> RawEncoder<'a> {
         Self::with_opts(EncodeOptions::new())
     }
 
-    /// Creates a new `RawEncoder` with the given options.
+    /// Creates a new `RawEncoder` with the given [`EncodeOptions`].
     pub fn with_opts(mut opts: EncodeOptions<'a>) -> Result<Self> {
         opts.cctx
             .set_parameter(CParameter::CompressionLevel(opts.compression_level))?;
@@ -270,7 +287,7 @@ impl RawEncoder<'_> {
         self.compress_with_prefix(input, output, None)
     }
 
-    /// Ends the current frame.
+    /// Ends the current frame and adds it to the seek table.
     ///
     /// Call this repetitively to write the frame epilogue to `output`. Returns two numbers,
     /// `(o, n)` where `o` is the number of bytes written to `output`, and `n` is a minimal
@@ -300,27 +317,18 @@ impl RawEncoder<'_> {
 
         self.seek_table
             .log_frame(self.frame_c_size, self.frame_d_size)?;
-        self.reset();
+        self.reset_frame();
 
         // If we get here the frame is complete
         Ok((out_buf.pos(), 0))
     }
 
-    /// Returns a reference to the internal [`SeekTable`].
-    ///
-    /// ```
-    /// use zeekstd::RawEncoder;
-    ///
-    /// let encoder = RawEncoder::new().unwrap();
-    /// let num_frames = encoder.seek_table().num_frames();
-    ///
-    /// assert_eq!(num_frames, 0);
-    /// ```
-    pub fn seek_table(&self) -> &SeekTable {
-        &self.seek_table
+    /// Clones and returns the internal [`SeekTable`].
+    pub fn to_seek_table(&self) -> SeekTable {
+        self.seek_table.clone()
     }
 
-    /// Converts this encoder into the internal [`SeekTable`].
+    /// Converts this raw encoder into the internal [`SeekTable`].
     pub fn into_seek_table(self) -> SeekTable {
         self.seek_table
     }
@@ -328,13 +336,39 @@ impl RawEncoder<'_> {
     /// Resets the current frame.
     ///
     /// This will discard any compression progress for the current frame and resets the
-    /// compression session. Can be called at any time.
-    pub fn reset(&mut self) {
+    /// compression session.
+    pub fn reset_frame(&mut self) {
         self.frame_c_size = 0;
         self.frame_d_size = 0;
         self.cctx
             .reset(ResetDirective::SessionOnly)
             .expect("Resetting session never fails");
+    }
+
+    /// Resets the internal [`SeekTable`].
+    ///
+    /// Note that this does not reset the current frame, in most cases this function should be
+    /// called together with `reset_frame()`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use zeekstd::RawEncoder;
+    /// # let mut encoder = RawEncoder::new().unwrap();
+    /// encoder.reset_frame();
+    /// encoder.reset_seek_table();
+    /// assert_eq!(encoder.num_frames(), 0);
+    /// ```
+    pub fn reset_seek_table(&mut self) {
+        self.seek_table = SeekTable::new();
+    }
+}
+
+impl Deref for RawEncoder<'_> {
+    type Target = SeekTable;
+
+    fn deref(&self) -> &Self::Target {
+        &self.seek_table
     }
 }
 
@@ -350,7 +384,7 @@ pub struct Encoder<'a, W> {
 impl<'a, W> Encoder<'a, W> {
     /// Creates a new `Encoder` with default parameters.
     ///
-    /// Compressed data gets written to `writer`.
+    /// This is equivalent to calling `EncodeOptions::new().into_encoder(writer)`.
     pub fn new(writer: W) -> Result<Self> {
         Self::with_opts(writer, EncodeOptions::new())
     }
@@ -397,7 +431,7 @@ impl<'a, W: std::io::Write> Encoder<'a, W> {
             }
 
             self.out_buf_pos += out_prog;
-            self.flush_out_buf()?;
+            self.flush_out_buf(false)?;
             input_progress += inp_prog;
         }
 
@@ -420,10 +454,7 @@ impl<W: std::io::Write> Encoder<'_, W> {
     /// let output = File::create("data.zst")?;
     /// let mut encoder = Encoder::new(output)?;
     ///
-    /// let data = b"Hello, ";
-    /// encoder.compress(data)?;
-    /// let data = b"World";
-    /// encoder.compress(data)?;
+    /// encoder.compress(b"Hello, World!")?;
     /// # Ok::<(), zeekstd::Error>(())
     ///
     /// ```
@@ -441,7 +472,7 @@ impl<W: std::io::Write> Encoder<'_, W> {
         loop {
             let (prog, n) = self.raw.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
             self.out_buf_pos += prog;
-            self.flush_out_buf()?;
+            self.flush_out_buf(false)?;
             progress += prog;
 
             if n == 0 {
@@ -452,8 +483,9 @@ impl<W: std::io::Write> Encoder<'_, W> {
 
     /// Ends the current frame and writes the seek table.
     ///
-    /// Call this to write the seek table to the internal writer. Returns the total number of
-    /// compressed bytes written by this `Encoder`.
+    /// Call this to write the seek table in `Foot` format to the internal writer. Returns the
+    /// total number of bytes, i.e. all compressed data plus the size of the seek table,
+    /// written by this `Encoder`.
     ///
     /// # Examples
     ///
@@ -464,33 +496,27 @@ impl<W: std::io::Write> Encoder<'_, W> {
     /// let output = File::create("data.zst")?;
     /// let mut encoder = Encoder::new(output)?;
     ///
-    /// let data = b"Hello";
-    /// encoder.compress(data)?;
+    /// encoder.compress(b"Hello")?;
     /// encoder.finish()?;
     /// # Ok::<(), zeekstd::Error>(())
     ///
     /// ```
-    pub fn finish(mut self) -> Result<u64> {
-        let mut progress = 0;
+    pub fn finish(self) -> Result<u64> {
+        self.finish_format(SeekTableFormat::Foot)
+    }
+
+    /// Ends the current frame and writes the seek table in the given format.
+    pub fn finish_format(mut self, format: SeekTableFormat) -> Result<u64> {
+        self.end_frame()?;
+        let mut ser = self.raw.into_seek_table().into_format_serializer(format);
 
         loop {
-            let (prog, n) = self.raw.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
-            self.out_buf_pos += prog;
-            self.flush_out_buf()?;
-            progress += prog;
-
-            if n == 0 {
-                break;
-            }
-        }
-
-        let mut st_ser = self.raw.into_seek_table().into_serializer();
-        loop {
-            let n = st_ser.write_into(&mut self.out_buf[self.out_buf_pos..]);
+            let n = ser.write_into(&mut self.out_buf[self.out_buf_pos..]);
             if n == 0 {
                 self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
+                self.written_compressed += self.out_buf_pos as u64;
                 self.writer.flush()?;
-                return Ok(self.written_compressed + progress as u64);
+                return Ok(self.written_compressed);
             }
 
             self.out_buf_pos += n;
@@ -499,19 +525,23 @@ impl<W: std::io::Write> Encoder<'_, W> {
                 self.written_compressed += self.out_buf_pos as u64;
                 self.out_buf_pos = 0;
             }
-            progress += n;
         }
     }
 
-    /// The total number of compressed bytes written to the internal writer so far.
+    /// The total number of compressed bytes that have been written to the internal writer.
     pub fn written_compressed(&self) -> u64 {
         self.written_compressed
     }
 
-    /// Flushes the internal output buffer, if it is filled with new data.
+    /// Converts this encoder into the internal [`SeekTable`].
+    pub fn into_seek_table(self) -> SeekTable {
+        self.raw.into_seek_table()
+    }
+
+    /// Flushes the internal output buffer, if it is filled with data, or force is true.
     #[inline]
-    fn flush_out_buf(&mut self) -> Result<()> {
-        if self.out_buf_pos == self.out_buf.len() {
+    fn flush_out_buf(&mut self, force: bool) -> Result<()> {
+        if self.out_buf_pos == self.out_buf.len() || force {
             self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
             self.written_compressed += self.out_buf_pos as u64;
             self.out_buf_pos = 0;
@@ -527,6 +557,20 @@ impl<W: std::io::Write> std::io::Write for Encoder<'_, W> {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        self.flush_out_buf(true).map_err(std::io::Error::other)?;
         self.writer.flush()
     }
+}
+
+impl<W> Deref for Encoder<'_, W> {
+    type Target = SeekTable;
+
+    fn deref(&self) -> &Self::Target {
+        &self.raw.seek_table
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //TODO: test resetting
 }

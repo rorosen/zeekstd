@@ -417,7 +417,7 @@ impl SeekTable {
         Ok(())
     }
 
-    /// The number of frames in this seek table.
+    /// The number of frames in the seek table.
     pub fn num_frames(&self) -> u32 {
         // Can always be casted (max value SEEKABLE_MAX_FRAMES)
         (self.entries.0.len() - 1) as u32
@@ -541,12 +541,7 @@ impl SeekTable {
     /// footer after any frame data. This is the typical seek table that can be appended to a
     /// seekable archive, however, parses need to seek the input for deserialization.
     pub fn into_serializer(self) -> Serializer {
-        Serializer {
-            frames: self.entries.into_frames(),
-            frame_index: 0,
-            write_pos: 0,
-            format: SeekTableFormat::Foot,
-        }
+        self.into_format_serializer(SeekTableFormat::Foot)
     }
 
     /// Convert this seek table in an immutable, serializable form.
@@ -554,12 +549,12 @@ impl SeekTable {
     /// The seek table will be serialized with the seekable integrity field placed as a
     /// header before any frame data. This is useful for creating a stand-alone seek table that
     /// can be parsed in a streaming fashion, i.e. without seeking the input.
-    pub fn into_format_serializer(self, fmt: SeekTableFormat) -> Serializer {
+    pub fn into_format_serializer(self, format: SeekTableFormat) -> Serializer {
         Serializer {
             frames: self.entries.into_frames(),
             frame_index: 0,
             write_pos: 0,
-            format: fmt,
+            format,
         }
     }
 
@@ -649,13 +644,7 @@ impl Serializer {
         // Write the integrity field after the frame data in Foot format
         if matches!(self.format, SeekTableFormat::Foot) {
             let offset = SKIPPABLE_HEADER_SIZE + SIZE_PER_FRAME * self.frames.len();
-            write_integrity!(
-                buf,
-                buf_pos,
-                self,
-                self.frames.len() as u32,
-                offset
-            );
+            write_integrity!(buf, buf_pos, self, self.frames.len() as u32, offset);
         }
 
         buf_pos

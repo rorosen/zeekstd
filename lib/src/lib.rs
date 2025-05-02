@@ -92,6 +92,8 @@ mod tests {
 
     use zstd_safe::{CCtx, CParameter, DCtx};
 
+    use crate::seek_table::SeekTableFormat;
+
     use super::*;
 
     const LINE_LEN: u32 = 23;
@@ -126,15 +128,12 @@ mod tests {
     fn seekable_cycle() -> Result<()> {
         let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
-        // let mut seekable = std::fs::File::create("/tmp/num.zst")?;
-        // let mut cctx = CCtx::create();
-        // cctx.set_parameter(CParameter::ChecksumFlag(true))?;
         let mut encoder = Encoder::new(&mut seekable)?;
-        // let mut encoder = Encoder::with_opts(&mut seekable, EncodeOptions::with_cctx(cctx));
 
         // Compress the input
         io::copy(&mut input, &mut encoder)?;
-        encoder.finish()?;
+        let n = encoder.finish()?;
+        assert_eq!(n, seekable.position());
 
         let mut decoder = DecodeOptions::new(seekable).into_decoder()?;
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
@@ -166,7 +165,8 @@ mod tests {
 
         // Compress the input
         io::copy(&mut input, &mut encoder).unwrap();
-        encoder.finish().unwrap();
+        let n = encoder.finish().unwrap();
+        assert_eq!(n, seekable.position());
 
         let mut decoder = Decoder::new(seekable).unwrap();
 
@@ -275,7 +275,8 @@ mod tests {
             }
             input_progress += n;
         }
-        encoder.finish()?;
+        let n = encoder.finish()?;
+        assert_eq!(n, patch.position());
 
         let mut decoder = Decoder::new(patch).unwrap();
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
@@ -308,5 +309,36 @@ mod tests {
         assert_eq!(new.get_ref(), output.get_ref());
 
         Ok(())
+    }
+
+    #[test]
+    fn stand_alone_seek_table() {
+        let mut input = generate_input(LINES_IN_DOC);
+        let mut seekable = Cursor::new(vec![]);
+        let mut encoder = Encoder::new(&mut seekable).unwrap();
+
+        io::copy(&mut input, &mut encoder).unwrap();
+        encoder.end_frame().unwrap();
+        encoder.flush().unwrap();
+
+        let written_compressed = encoder.written_compressed();
+        let mut st_ser = encoder
+            .into_seek_table()
+            .into_format_serializer(SeekTableFormat::Head);
+        let mut st_reader = Cursor::new(vec![]);
+        io::copy(&mut st_ser, &mut st_reader).unwrap();
+
+        assert_eq!(written_compressed, seekable.position());
+        st_reader.set_position(0);
+
+        let seek_table = SeekTable::from_reader(&mut st_reader).unwrap();
+        let mut decoder = DecodeOptions::new(seekable)
+            .seek_table(seek_table)
+            .into_decoder()
+            .unwrap();
+        let mut output = Cursor::new(vec![]);
+        io::copy(&mut decoder, &mut output).unwrap();
+
+        assert_eq!(input, output);
     }
 }
