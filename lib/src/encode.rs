@@ -484,9 +484,9 @@ impl<W: std::io::Write> Encoder<'_, W> {
             }
         }
 
-        let mut st_writer = self.raw.into_seek_table().into_foot_serializer();
+        let mut st_ser = self.raw.into_seek_table().into_serializer();
         loop {
-            let n = st_writer.write_into(&mut self.out_buf[self.out_buf_pos..]);
+            let n = st_ser.write_into(&mut self.out_buf[self.out_buf_pos..]);
             if n == 0 {
                 self.writer.write_all(&self.out_buf[..self.out_buf_pos])?;
                 self.writer.flush()?;
