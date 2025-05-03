@@ -572,7 +572,22 @@ impl<W> Deref for Encoder<'_, W> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{self, Cursor, Write};
+
+    use xxhash_rust::xxh64::xxh64;
+
+    use crate::tests::{LINE_LEN, generate_input};
+
     use super::*;
+
+    macro_rules! read_le32 {
+        ($buf:expr) => {
+            ($buf[0] as u32)
+                | (($buf[1] as u32) << 8)
+                | (($buf[2] as u32) << 16)
+                | (($buf[3] as u32) << 24)
+        };
+    }
 
     #[test]
     fn raw_decoder_reset() {
@@ -596,5 +611,40 @@ mod tests {
         let second_st = encoder.to_seek_table();
 
         debug_assert_eq!(first_st, second_st);
+    }
+
+    #[test]
+    fn checksum() {
+        const LINES_IN_FRAME: u32 = 123;
+        const FRAME_SIZE: usize = (LINE_LEN * LINES_IN_FRAME) as usize;
+
+        let mut input = generate_input(3 * LINES_IN_FRAME);
+        let mut seekable = Cursor::new(vec![]);
+        let mut encoder = EncodeOptions::new()
+            .checksum_flag(true)
+            .frame_size_policy(FrameSizePolicy::Uncompressed(LINE_LEN * LINES_IN_FRAME))
+            .into_encoder(&mut seekable)
+            .unwrap();
+
+        io::copy(&mut input, &mut encoder).unwrap();
+        encoder.end_frame().unwrap();
+        encoder.flush().unwrap();
+        assert_eq!(encoder.num_frames(), 3);
+        let st = encoder.into_seek_table();
+
+        for i in 0usize..3 {
+            let start_pos = st.frame_start_comp(i as u32).unwrap();
+            // Get the Frame_Header_Descriptor
+            let descriptor = seekable.get_ref()[start_pos as usize + 4];
+            // Check that the Content_Checksum_flag is set
+            assert!(descriptor & 0x4 > 0);
+
+            let end_pos = st.frame_end_comp(i as u32).unwrap();
+            let expected = xxh64(&input.get_ref()[i * FRAME_SIZE..(i + 1) * FRAME_SIZE], 0) as u32;
+            // The actual checksum (last 4 bytes of frame)
+            let actual = read_le32!(seekable.get_ref()[(end_pos - 4) as usize..]);
+
+            assert_eq!(expected, actual);
+        }
     }
 }

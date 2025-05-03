@@ -262,25 +262,20 @@ impl<S: Seekable> std::io::Read for Decoder<'_, S> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{self, BufRead, Cursor, Write};
+    use std::io::{self, BufRead, Cursor};
 
-    use crate::{EncodeOptions, FrameSizePolicy};
+    use crate::{
+        EncodeOptions, FrameSizePolicy,
+        tests::{LINE_LEN, LINES_IN_DOC, generate_input},
+    };
 
     use super::*;
-
-    const LINE_LEN: u32 = 23;
-    const LINES_IN_DOC: u32 = 200_384;
 
     #[test]
     fn partly_decompression() {
         const LINES_IN_FRAME: u32 = 1143;
 
-        let mut input = Cursor::new(vec![]);
-        for i in 0..LINES_IN_DOC {
-            writeln!(&mut input, "Hello from line {:06}", i).unwrap();
-        }
-
-        input.set_position(0);
+        let mut input = generate_input(LINES_IN_DOC);
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = EncodeOptions::new()
             .frame_size_policy(FrameSizePolicy::Uncompressed(LINE_LEN * LINES_IN_FRAME))

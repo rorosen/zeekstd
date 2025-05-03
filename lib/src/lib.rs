@@ -96,8 +96,8 @@ mod tests {
 
     use super::*;
 
-    const LINE_LEN: u32 = 23;
-    const LINES_IN_DOC: u32 = 200_384;
+    pub const LINE_LEN: u32 = 23;
+    pub const LINES_IN_DOC: u32 = 200_384;
 
     fn highbit_64(mut v: usize) -> u32 {
         if v == 0 {
@@ -114,7 +114,7 @@ mod tests {
         count
     }
 
-    fn generate_input(num_lines: u32) -> Cursor<Vec<u8>> {
+    pub fn generate_input(num_lines: u32) -> Cursor<Vec<u8>> {
         let mut input = Cursor::new(Vec::with_capacity((LINE_LEN * num_lines) as usize));
         for i in 0..num_lines {
             writeln!(&mut input, "Hello from line {:06}", i).unwrap();
