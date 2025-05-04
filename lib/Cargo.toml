@@ -1,6 +1,6 @@
 [package]
 name = "zeekstd"
-version = "0.2.0"
+version = "0.3.0"
 description = "Rust implementation of the Zstandard Seekable Format."
 edition.workspace = true
 license.workspace = true
@@ -18,5 +18,5 @@ rand = "0.9.1"
 xxhash-rust = { version = "0.8.15", features = ["xxh64"] }
 
 [dev-dependencies.zstd-safe]
-version = "*"
+workspace = true
 features = ["seekable"]
