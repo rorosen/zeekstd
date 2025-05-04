@@ -108,21 +108,13 @@ impl Entries {
     }
 
     fn into_frames(self) -> Vec<Frame> {
-        let len = self.0.len() - 1;
-        let cap = core::mem::size_of::<Frame>() * len;
-        let mut frames = Vec::with_capacity(cap);
-
-        let mut idx = 0;
-        while idx < len {
-            let frame = Frame {
-                c_size: (self.0[idx + 1].c_offset - self.0[idx].c_offset) as u32,
-                d_size: (self.0[idx + 1].d_offset - self.0[idx].d_offset) as u32,
-            };
-            frames.push(frame);
-            idx += 1;
-        }
-
-        frames
+        self.0
+            .windows(2)
+            .map(|w| Frame {
+                c_size: (w[1].c_offset - w[0].c_offset) as u32,
+                d_size: (w[1].d_offset - w[0].d_offset) as u32,
+            })
+            .collect()
     }
 }
 
