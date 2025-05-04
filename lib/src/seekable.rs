@@ -7,7 +7,7 @@ use crate::{
 pub trait Seekable {
     /// Sets the read offset from the start of the seekable.
     fn set_offset(&mut self, offset: u64) -> Result<()>;
-    /// Pull some bytes from this source into the specified buffer, returning how many bytes were read.
+    /// Pull some bytes from this source into `buf`, returning how many bytes were read.
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
     /// Returns the footer of this seekable.
     ///

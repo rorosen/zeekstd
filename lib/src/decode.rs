@@ -66,7 +66,7 @@ impl<'a, S> DecodeOptions<'a, S> {
 
     /// Sets the [`SeekTable`] for this options.
     ///
-    /// If a seek table is set, it will be used directly during decompression instead of parsing
+    /// If a seek table is set, it will be used directly during decompression instead of reading
     /// the seek table from the seekable `src`.
     pub fn seek_table(mut self, seek_table: SeekTable) -> Self {
         self.seek_table = Some(seek_table);

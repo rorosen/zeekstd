@@ -5,7 +5,7 @@ use zstd_safe::{
     zstd_sys::ZSTD_EndDirective,
 };
 
-use crate::{SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result, seek_table::SeekTableFormat};
+use crate::{SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result, seek_table::Format};
 
 // Constant value always can be casted
 const MAX_FRAME_SIZE: u32 = SEEKABLE_MAX_FRAME_SIZE as u32;
@@ -156,7 +156,7 @@ impl<'a> EncodeOptions<'a> {
 /// # Example
 ///
 /// ```
-/// use zeekstd::{FrameSizePolicy, RawEncoder};
+/// use zeekstd::RawEncoder;
 ///
 /// let mut encoder = RawEncoder::new()?;
 /// let mut buf = vec![0; 1024];
@@ -328,7 +328,7 @@ impl RawEncoder<'_> {
         self.seek_table.clone()
     }
 
-    /// Converts this raw encoder into the internal [`SeekTable`].
+    /// Consumes this raw encoder and returns the internal [`SeekTable`].
     pub fn into_seek_table(self) -> SeekTable {
         self.seek_table
     }
@@ -502,11 +502,11 @@ impl<W: std::io::Write> Encoder<'_, W> {
     ///
     /// ```
     pub fn finish(self) -> Result<u64> {
-        self.finish_format(SeekTableFormat::Foot)
+        self.finish_format(Format::Foot)
     }
 
     /// Ends the current frame and writes the seek table in the given format.
-    pub fn finish_format(mut self, format: SeekTableFormat) -> Result<u64> {
+    pub fn finish_format(mut self, format: Format) -> Result<u64> {
         self.end_frame()?;
         let mut ser = self.raw.into_seek_table().into_format_serializer(format);
 

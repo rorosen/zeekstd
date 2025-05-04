@@ -13,7 +13,8 @@
 //!
 //! # Compression
 //!
-//! Use the [`Encoder`] struct for streaming data compression.
+//! A seekable [`Encoder`] will start new frames automatically at 2MiB of uncompressed data. See
+//! [`EncodeOptions`] to change this and other compression parameters.
 //!
 //! ```no_run
 //! use std::{fs::File, io};
@@ -29,7 +30,7 @@
 //! ```
 //! # Decompression
 //!
-//! Streaming decompression can be achieved using the [`Decoder`] struct.
+//! By default, the seekable [`Decoder`] decompresses everything, from the first to the last frame.
 //!
 //! ```no_run
 //! use std::{fs::File, io};
@@ -42,7 +43,7 @@
 //! # Ok::<(), zeekstd::Error>(())
 //! ```
 //!
-//! Or decompress only specific frames.
+//! It can also decompress only specific frames.
 //!
 //! ```no_run
 //! # use std::{fs::File, io};
@@ -55,7 +56,7 @@
 //! # Ok::<(), zeekstd::Error>(())
 //! ```
 //!
-//! [specification]: https://github.com/rorosen/zeekstd/seekable_format.md
+//! [specification]: https://github.com/rorosen/zeekstd/blob/main/seekable_format.md
 //! [zstd_safe]: https://docs.rs/zstd-safe/latest/zstd_safe/
 
 mod decode;
@@ -91,7 +92,7 @@ mod tests {
 
     use zstd_safe::{CCtx, CParameter, DCtx};
 
-    use crate::seek_table::SeekTableFormat;
+    use crate::seek_table::Format;
 
     use super::*;
 
@@ -226,7 +227,7 @@ mod tests {
         let written_compressed = encoder.written_compressed();
         let mut st_ser = encoder
             .into_seek_table()
-            .into_format_serializer(SeekTableFormat::Head);
+            .into_format_serializer(Format::Head);
         let mut st_reader = Cursor::new(vec![]);
         io::copy(&mut st_ser, &mut st_reader).unwrap();
 

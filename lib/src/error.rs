@@ -20,7 +20,7 @@ impl Error {
         }
     }
 
-    /// Returns true if the error is of type "Other".
+    /// Returns true if the error is of type `Other`.
     pub fn is_other(&self) -> bool {
         matches!(self.kind, Kind::Other(_))
     }

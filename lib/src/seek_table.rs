@@ -235,11 +235,11 @@ impl From<Parser> for SeekTable {
 
 /// The format that should be used when serializing the seek table.
 ///
-/// The `Head` format will place the seek table integrity field directly after the skippable header
-/// in the skippable seek table frame, before any frame data. The `Foot` format places the
+/// The `Head` format will place the seek table integrity field directly after the skippable
+/// header, before any frame data, in the skippable seek table frame. The `Foot` format places the
 /// integrity field at the end of the skippable frame, after any frame data.
 #[derive(Debug, Clone, Copy, Default)]
-pub enum SeekTableFormat {
+pub enum Format {
     Head,
     #[default]
     Foot,
@@ -533,7 +533,7 @@ impl SeekTable {
     /// footer after any frame data. This is the typical seek table that can be appended to a
     /// seekable archive, however, parses need to seek the input for deserialization.
     pub fn into_serializer(self) -> Serializer {
-        self.into_format_serializer(SeekTableFormat::Foot)
+        self.into_format_serializer(Format::Foot)
     }
 
     /// Convert this seek table in an immutable, serializable form.
@@ -541,7 +541,7 @@ impl SeekTable {
     /// The seek table will be serialized with the seekable integrity field placed as a
     /// header before any frame data. This is useful for creating a stand-alone seek table that
     /// can be parsed in a streaming fashion, i.e. without seeking the input.
-    pub fn into_format_serializer(self, format: SeekTableFormat) -> Serializer {
+    pub fn into_format_serializer(self, format: Format) -> Serializer {
         Serializer {
             frames: self.entries.into_frames(),
             frame_index: 0,
@@ -594,7 +594,7 @@ pub struct Serializer {
     frames: Vec<Frame>,
     frame_index: usize,
     write_pos: usize,
-    format: SeekTableFormat,
+    format: Format,
 }
 
 impl Serializer {
@@ -610,7 +610,7 @@ impl Serializer {
         write_le32!(buf, buf_pos, self.write_pos, self.frame_size(), 4);
 
         // Write the integrity field before the frame data in Head format
-        if matches!(self.format, SeekTableFormat::Head) {
+        if matches!(self.format, Format::Head) {
             write_integrity!(
                 buf,
                 buf_pos,
@@ -624,17 +624,17 @@ impl Serializer {
         while self.frame_index < self.frames.len() {
             let offset = SKIPPABLE_HEADER_SIZE + SIZE_PER_FRAME * self.frame_index;
             match self.format {
-                SeekTableFormat::Head => {
+                Format::Head => {
                     write_frame!(buf, buf_pos, self, offset + SEEK_TABLE_INTEGRITY_SIZE);
                 }
-                SeekTableFormat::Foot => {
+                Format::Foot => {
                     write_frame!(buf, buf_pos, self, offset);
                 }
             }
         }
 
         // Write the integrity field after the frame data in Foot format
-        if matches!(self.format, SeekTableFormat::Foot) {
+        if matches!(self.format, Format::Foot) {
             let offset = SKIPPABLE_HEADER_SIZE + SIZE_PER_FRAME * self.frames.len();
             write_integrity!(buf, buf_pos, self, self.frames.len() as u32, offset);
         }
@@ -747,7 +747,7 @@ mod tests {
         assert_eq!(st.max_frame_size_decomp(), NUM_FRAMES as u64 * 13);
     }
 
-    fn test_serialize(format: SeekTableFormat) {
+    fn test_serialize(format: Format) {
         let mut ser = seek_table().clone().into_format_serializer(format);
 
         // Complete serialization
@@ -780,11 +780,11 @@ mod tests {
 
     #[test]
     fn serialize() {
-        test_serialize(SeekTableFormat::Head);
-        test_serialize(SeekTableFormat::Foot);
+        test_serialize(Format::Head);
+        test_serialize(Format::Foot);
     }
 
-    fn test_serde_cycle(format: SeekTableFormat) {
+    fn test_serde_cycle(format: Format) {
         let st = seek_table();
         let mut ser = st.clone().into_format_serializer(format);
 
@@ -802,16 +802,16 @@ mod tests {
 
         seek_table.set_position(0);
         let deserialized = match format {
-            SeekTableFormat::Head => SeekTable::from_reader(&mut seek_table).unwrap(),
-            SeekTableFormat::Foot => SeekTable::from_seekable(&mut seek_table).unwrap(),
+            Format::Head => SeekTable::from_reader(&mut seek_table).unwrap(),
+            Format::Foot => SeekTable::from_seekable(&mut seek_table).unwrap(),
         };
         assert_eq!(deserialized, st);
     }
 
     #[test]
     fn serde_cycle() {
-        test_serde_cycle(SeekTableFormat::Head);
-        test_serde_cycle(SeekTableFormat::Foot);
+        test_serde_cycle(Format::Head);
+        test_serde_cycle(Format::Foot);
     }
 
     #[test]
