@@ -1,5 +1,5 @@
-//! This crate provides a Rust implementation of the [Zstandard Seekable Format], as outlined in
-//! the [specification][zstd_specification].
+//! This crate provides a Rust implementation of the Zstandard Seekable Format, as outlined in
+//! the [specification].
 //!
 //! The seekable format splits compressed data into a series of independent "frames", each
 //! compressed individually, so that decompression of a section in the middle of an archive only
@@ -55,8 +55,7 @@
 //! # Ok::<(), zeekstd::Error>(())
 //! ```
 //!
-//! [Zstandard Seekable Format]: https://github.com/facebook/zstd/tree/dev/contrib/seekable_format
-//! [zstd_specification]: https://github.com/facebook/zstd/blob/dev/contrib/seekable_format/zstd_seekable_compression_format.md
+//! [specification]: https://github.com/rorosen/zeekstd/seekable_format.md
 //! [zstd_safe]: https://docs.rs/zstd-safe/latest/zstd_safe/
 
 mod decode;
