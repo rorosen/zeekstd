@@ -1,5 +1,30 @@
 # Zeekstd CLI
 
+## Building
+
+If you have Rust installed, just clone this repo and run `cargo build`.
+
+```bash
+git clone https://github.com/rorosen/zeekstd.git
+cd zeekstd
+cargo build -p zeekstd_cli --release
+./target/release/zeekstd --version
+```
+
+Alternatively, build with `nix build`.
+
+```bash
+nix build github:rorosen/zeekstd#default
+./result/bin/zeekstd --version
+```
+
+Zeekstd is also available from nixpkgs.
+
+```bash
+nix-shell -p zeekstd
+zeekstd --version
+```
+
 ## Compression
 
 Compress data with the `compress` subcommand. This is the default when no subcommand is specified.

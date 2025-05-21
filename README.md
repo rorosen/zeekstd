@@ -30,7 +30,7 @@ fn main() -> zeekstd::Result<()> {
     let output = File::create("seekable.zst")?;
     let mut encoder = Encoder::new(output)?;
     io::copy(&mut input, &mut encoder)?;
-    // End compression and write the seek table
+    // End compression and write the seek table to the end of the seekable
     encoder.finish()?;
 
     Ok(())
