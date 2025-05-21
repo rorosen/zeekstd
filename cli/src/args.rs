@@ -75,13 +75,32 @@ impl FromStr for ByteOffset {
 
 #[derive(Debug, Parser, Clone)]
 pub struct CliFlags {
-    /// Disable output checks.
-    #[arg(short, long, action, global = true)]
-    pub force: bool,
-
     /// Suppress output.
     #[arg(short, long, action, global = true)]
     pub quiet: bool,
+
+    /// Disable human-readable formatting for all byte numbers.
+    #[arg(short, long, action, global = true)]
+    pub raw_bytes: bool,
+}
+
+impl CliFlags {
+    pub fn progress_bar(&self, in_path: Option<&str>) -> Option<ProgressBar> {
+        (!self.quiet).then(|| {
+            let len = in_path.and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
+            ProgressBar::with_draw_target(len, ProgressDrawTarget::stderr_with_hz(5)).with_style(
+                ProgressStyle::with_template("{binary_bytes} of {binary_total_bytes}")
+                    .expect("Static template always works"),
+            )
+        })
+    }
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct SharedArgs {
+    /// Disable output checks.
+    #[arg(short, long, action, global = true)]
+    pub force: bool,
 
     /// Write to STDOUT.
     #[arg(short = 'c', long, action, global = true)]
@@ -90,10 +109,6 @@ pub struct CliFlags {
     /// Do not show the progress counter.
     #[arg(long, action, global = true)]
     pub no_progress: bool,
-
-    /// Disable human-readable formatting for all byte numbers.
-    #[arg(short, long, action, global = true)]
-    pub raw_bytes: bool,
 
     /// Force memory-mapping prefix (patch) files.
     #[arg(long, action, global = true)]
@@ -104,21 +119,7 @@ pub struct CliFlags {
     pub no_mmap_prefix: bool,
 }
 
-impl CliFlags {
-    pub fn is_with_progress(&self) -> bool {
-        !self.quiet && !self.stdout && !self.no_progress
-    }
-
-    pub fn progress_bar(&self, in_path: Option<&str>) -> Option<ProgressBar> {
-        self.is_with_progress().then(|| {
-            let len = in_path.and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
-            ProgressBar::with_draw_target(len, ProgressDrawTarget::stderr_with_hz(5)).with_style(
-                ProgressStyle::with_template("{binary_bytes} of {binary_total_bytes}")
-                    .expect("Static template always works"),
-            )
-        })
-    }
-
+impl SharedArgs {
     pub fn use_mmap(&self, prefix_len: Option<u64>) -> bool {
         if self.mmap_prefix {
             return true;
@@ -134,6 +135,9 @@ impl CliFlags {
 
 #[derive(Debug, Parser, Clone)]
 pub struct CompressArgs {
+    #[clap(flatten)]
+    pub shared: SharedArgs,
+
     /// Desired compression level between 1 and 19. Lower numbers provide faster compression,
     /// higher numbers yield better compression ratios.
     #[arg(long, default_value_t = 3)]
@@ -177,6 +181,9 @@ impl CompressArgs {
 
 #[derive(Debug, Parser, Clone)]
 pub struct DecompressArgs {
+    #[clap(flatten)]
+    pub shared: SharedArgs,
+
     /// The offset (of the uncompressed data) where decompression starts. Accepts the special
     /// values 'start' and 'end'.
     #[arg(long, group = "start", default_value = "start")]

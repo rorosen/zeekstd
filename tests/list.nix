@@ -5,7 +5,7 @@
 runCommand "zeekstd-list-test" { nativeBuildInputs = [ zeekstd ]; } ''
   set -x
 
-  seq 20000 | zeekstd -o num.zst
+  seq 690000 | zeekstd -o num.zst
 
   # Just check that list works, no proper test yet
   zeekstd l num.zst

@@ -20,4 +20,4 @@ clap = { version = "4.5.36", features = ["derive"] }
 indicatif = "0.17.11"
 memmap2 = "0.9.5"
 zeekstd = { path = "../lib" }
-zstd-safe = { workspace = true, features = ["std", "seekable"] }
+zstd-safe.workspace = true

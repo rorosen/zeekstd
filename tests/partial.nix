@@ -5,7 +5,7 @@
 runCommand "zeekstd-partial-test" { nativeBuildInputs = [ zeekstd ]; } ''
   set -x
 
-  seq 20000 > num
+  seq 35000 > num
   zeekstd --max-frame-size 1K num -o num.zst
 
   # Decompress only the first frame

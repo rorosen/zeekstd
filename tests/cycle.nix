@@ -13,7 +13,7 @@ runCommand "zeekstd-cycle-test"
   ''
     set -x
 
-    seq 20000 > num
+    seq 28000 > num
     # Compress via input file and stdin
     zeekstd num
     cat num | zeekstd -o num.stdin.zst

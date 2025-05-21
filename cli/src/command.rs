@@ -57,7 +57,7 @@ impl Command {
         }
     }
 
-    fn out_path(&self, is_stdout: bool) -> Option<PathBuf> {
+    fn out_path(&self) -> Option<PathBuf> {
         let in_path = self.in_path().map(PathBuf::from);
         let out_path = in_path.as_ref().map(|p| {
             // TODO: Use `add_extension` when stable: https://github.com/rust-lang/rust/issues/127292
@@ -73,6 +73,11 @@ impl Command {
             p.with_extension(extension)
         });
 
+        let is_stdout = match self {
+            Self::Compress(CompressArgs { shared, .. })
+            | Self::Decompress(DecompressArgs { shared, .. }) => shared.stdout,
+            _ => false,
+        };
         if is_stdout {
             return None;
         }
@@ -87,21 +92,30 @@ impl Command {
         }
     }
 
+    fn force_write_stdout(&self) -> bool {
+        match self {
+            Self::Compress(CompressArgs { shared, .. })
+            | Self::Decompress(DecompressArgs { shared, .. }) => shared.force,
+            // Always write to stdout in list mode
+            Self::List(_) => true,
+        }
+    }
+
     pub fn run(self, flags: CliFlags) -> Result<()> {
         let in_path = self.in_path();
-        let out_path = self.out_path(flags.stdout);
-        // Always write to terminal in list mode
-        let force_write_stdout = !flags.force && !matches!(self, Self::List(_));
+        let out_path = self.out_path();
+        let force_write_stdout = self.force_write_stdout();
 
         // This is a closure so the writer can be created after the input has been validated
         let new_writer = || -> Result<Box<dyn Write>> {
             match &out_path {
                 Some(path) => {
                     let meta = fs::metadata(path).ok();
-                    if !flags.force
+                    if !force_write_stdout
                         && path.exists()
                         && !meta.is_some_and(|m| m.file_type().is_char_device())
                     {
+                        // Refuse to overwrite existing files when quiet or input via stdin
                         if flags.quiet || in_path.is_none() {
                             bail!("{} already exists; not overwritten", path.display());
                         }
@@ -155,7 +169,7 @@ impl Command {
                     reader,
                     compressor,
                     prefix: args.patch_from,
-                    mmap_prefix: flags.use_mmap(prefix_len),
+                    mmap_prefix: args.shared.use_mmap(prefix_len),
                     out_path: out_path
                         .and_then(|p| p.to_str().map(|s| s.into()))
                         .unwrap_or("STDOUT".into()),
@@ -180,7 +194,7 @@ impl Command {
                     decompressor,
                     writer,
                     prefix: args.patch_apply,
-                    mmap_prefix: flags.use_mmap(prefix_len),
+                    mmap_prefix: args.shared.use_mmap(prefix_len),
                     bar: flags.progress_bar(in_path.as_deref()),
                 };
 

@@ -65,12 +65,7 @@ fn main() -> zeekstd::Result<()> {
 
 ## CLI
 
-This repo also contains a [CLI tool](./cli) to create and decompress seekable archives.
-
-```bash
-nix-shell -p zeekstd
-zeekstd --help
-```
+This repo also contains a [CLI tool](./cli) that uses the library.
 
 ## License
 
