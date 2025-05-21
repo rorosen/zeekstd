@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use zstd_safe::zstd_sys::ZSTD_ErrorCode;
 
 use crate::{
@@ -285,8 +287,8 @@ impl SeekTable {
 
     /// Parses the seek table from a seekable archive.
     ///
-    /// This only works if the seek table has the descriptor section at the end as a footer and is
-    /// appended to the end of the archive.
+    /// This only works if the seek table is in `Foot` format (the integrity field is at the end)
+    /// and is appended to the end of the seekable archive.
     ///
     /// # Errors
     ///
@@ -329,8 +331,8 @@ impl SeekTable {
     /// Parses a seek table from a byte slice.
     ///
     /// The passed `buf` should only contain the seek table, not the complete seekable archive.
-    /// Will first look for the seekable integrity field at the start of `buf` (header), if
-    /// that fails, it will try to find the integrity field at the end of `buf` (footer).
+    /// Will first look for the seekable integrity field at the start of `buf` (`Head` format), if
+    /// that fails, it will try to find the integrity field at the end of `buf` (`Foot` format).
     ///
     /// # Errors
     ///
@@ -357,13 +359,13 @@ impl SeekTable {
     /// Parses a seek table from a reader.
     ///
     /// The passed `reader` should only read the seek table, not the complete seekable archive.
-    /// Creating a `SeekTable` from a reader only works with seek tables that have the seekable
-    /// integrity field placed as a header.
+    /// Creating a `SeekTable` from a reader only works with seek tables in `Head` format (the
+    /// integrity field is placed at the beginning).
     ///
     /// # Errors
     ///
     /// Fails if the integrity field is not present as header, or if verification fails.
-    pub fn from_reader(mut reader: impl std::io::Read) -> Result<Self> {
+    pub fn from_reader(reader: &mut impl Read) -> Result<Self> {
         let mut buf = [0u8; SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE];
         reader.read_exact(&mut buf)?;
 

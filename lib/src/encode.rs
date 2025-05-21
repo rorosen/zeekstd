@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use zstd_safe::{
     CCtx, CParameter, CompressionLevel, InBuffer, OutBuffer, ResetDirective,
     zstd_sys::ZSTD_EndDirective,
@@ -323,9 +321,9 @@ impl RawEncoder<'_> {
         Ok((out_buf.pos(), 0))
     }
 
-    /// Clones and returns the internal [`SeekTable`].
-    pub fn to_seek_table(&self) -> SeekTable {
-        self.seek_table.clone()
+    /// Returns a reference to the internal [`SeekTable`].
+    pub fn seek_table(&self) -> &SeekTable {
+        &self.seek_table
     }
 
     /// Consumes this raw encoder and returns the internal [`SeekTable`].
@@ -357,18 +355,10 @@ impl RawEncoder<'_> {
     /// # let mut encoder = RawEncoder::new().unwrap();
     /// encoder.reset_frame();
     /// encoder.reset_seek_table();
-    /// assert_eq!(encoder.num_frames(), 0);
+    /// assert_eq!(encoder.seek_table().num_frames(), 0);
     /// ```
     pub fn reset_seek_table(&mut self) {
         self.seek_table = SeekTable::new();
-    }
-}
-
-impl Deref for RawEncoder<'_> {
-    type Target = SeekTable;
-
-    fn deref(&self) -> &Self::Target {
-        &self.seek_table
     }
 }
 
@@ -398,6 +388,11 @@ impl<'a, W> Encoder<'a, W> {
             writer,
             written_compressed: 0,
         })
+    }
+
+    /// Returns a reference to the internal [`SeekTable`].
+    pub fn seek_table(&self) -> &SeekTable {
+        &self.raw.seek_table
     }
 }
 
@@ -562,14 +557,6 @@ impl<W: std::io::Write> std::io::Write for Encoder<'_, W> {
     }
 }
 
-impl<W> Deref for Encoder<'_, W> {
-    type Target = SeekTable;
-
-    fn deref(&self) -> &Self::Target {
-        &self.raw.seek_table
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::{self, Cursor, Write};
@@ -595,22 +582,21 @@ mod tests {
         let mut buf = vec![0; 1024];
         encoder.compress(b"Hello", &mut buf).unwrap();
         encoder.end_frame(&mut buf).unwrap();
-        assert_eq!(encoder.num_frames(), 1);
-        let first_st = encoder.to_seek_table();
+        assert_eq!(encoder.seek_table().num_frames(), 1);
+        let first_st = encoder.seek_table().clone();
 
         // Build up some frame progress to reset it later
         encoder.compress(b"Bye", &mut [0; 128]).unwrap();
 
         encoder.reset_frame();
         encoder.reset_seek_table();
-        assert_eq!(encoder.num_frames(), 0);
+        assert_eq!(encoder.seek_table().num_frames(), 0);
 
         encoder.compress(b"Hello", &mut buf).unwrap();
         encoder.end_frame(&mut buf).unwrap();
-        assert_eq!(encoder.num_frames(), 1);
-        let second_st = encoder.to_seek_table();
+        assert_eq!(encoder.seek_table().num_frames(), 1);
 
-        debug_assert_eq!(first_st, second_st);
+        debug_assert_eq!(&first_st, encoder.seek_table());
     }
 
     #[test]
@@ -629,7 +615,7 @@ mod tests {
         io::copy(&mut input, &mut encoder).unwrap();
         encoder.end_frame().unwrap();
         encoder.flush().unwrap();
-        assert_eq!(encoder.num_frames(), 3);
+        assert_eq!(encoder.seek_table().num_frames(), 3);
         let st = encoder.into_seek_table();
 
         for i in 0usize..3 {

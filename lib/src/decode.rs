@@ -1,5 +1,3 @@
-use core::ops::Deref;
-
 use zstd_safe::{DCtx, InBuffer, OutBuffer, ResetDirective};
 
 use crate::{error::Result, seek_table::SeekTable, seekable::Seekable};
@@ -244,12 +242,9 @@ impl<S: Seekable> Decoder<'_, S> {
     pub fn read_compressed(&self) -> u64 {
         self.read_compressed
     }
-}
 
-impl<S> Deref for Decoder<'_, S> {
-    type Target = SeekTable;
-
-    fn deref(&self) -> &Self::Target {
+    /// Returns a reference to the internal [`SeekTable`].
+    pub fn seek_table(&self) -> &SeekTable {
         &self.seek_table
     }
 }
@@ -291,7 +286,7 @@ mod tests {
 
         // Add one for the last frame
         let num_frames = LINES_IN_DOC / LINES_IN_FRAME + 1;
-        assert_eq!(num_frames, decoder.num_frames());
+        assert_eq!(num_frames, decoder.seek_table().num_frames());
 
         let mut output = Cursor::new(vec![]);
         io::copy(&mut decoder, &mut output).unwrap();
