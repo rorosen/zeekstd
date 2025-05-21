@@ -1,9 +1,9 @@
 use std::{fs, path::PathBuf, str::FromStr};
 
 use anyhow::bail;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use zeekstd::{CompressionLevel, FrameSizePolicy, SeekTable};
+use zeekstd::{CompressionLevel, SeekTable};
 
 // 128 MiB
 const MMAP_THRESHOLD: u64 = 0x100000;
@@ -32,11 +32,10 @@ impl FromStr for ByteValue {
         let value = value.parse()?;
 
         let value = match unit.as_str() {
-            "" | "B" => value,
+            "B" | "" => value,
             "K" | "kib" => value * 1024,
             "M" | "mib" => value * 1024 * 1024,
             "G" | "gib" => value * 1024 * 1024 * 1024,
-            "T" | "tib" => value * 1024 * 1024 * 1024 * 1024,
             _ => bail!("Unknown unit: {unit:?}"),
         };
 
@@ -117,6 +116,10 @@ pub struct SharedArgs {
     /// Force disable memory-mapping prefix (patch) files.
     #[arg(long, action, global = true)]
     pub no_mmap_prefix: bool,
+
+    /// Path to the seek table file. If specified, implies the "Head" seek table format.
+    #[arg(long, global = true)]
+    pub seek_table_file: Option<PathBuf>,
 }
 
 impl SharedArgs {
@@ -133,6 +136,12 @@ impl SharedArgs {
     }
 }
 
+#[derive(Debug, ValueEnum, Clone)]
+pub enum FrameSizePolicy {
+    Compressed,
+    Uncompressed,
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct CompressArgs {
     #[clap(flatten)]
@@ -140,21 +149,21 @@ pub struct CompressArgs {
 
     /// Desired compression level between 1 and 19. Lower numbers provide faster compression,
     /// higher numbers yield better compression ratios.
-    #[arg(long, default_value_t = 3)]
+    #[arg(short = 'l', long, default_value_t = 3)]
     pub compression_level: CompressionLevel,
 
     /// Don't include frame checksums.
     #[arg(long, action)]
     pub no_checksum: bool,
 
-    /// The frame size at which to start a new seekable frame. Accepts the suffixes kib, mib, gib
-    /// and tib.
+    /// The frame size at which to start a new frame. Accepts the suffixes K (kib), M (mib) and G
+    /// (gib).
     #[arg(long, default_value = "2M")]
-    pub max_frame_size: ByteValue,
+    pub frame_size: ByteValue,
 
-    /// Apply the max frame size to compressed frame size instead of uncompressed frame size.
-    #[arg(long, action)]
-    pub frame_size_compressed: bool,
+    /// Whether to apply the frame size to compressed or uncompressed size of the frame data.
+    #[arg(long, default_value = "uncompressed")]
+    pub frame_size_policy: FrameSizePolicy,
 
     /// Provide a reference point for Zstandard's diff engine.
     #[arg(long)]
@@ -170,11 +179,14 @@ pub struct CompressArgs {
 }
 
 impl CompressArgs {
-    pub fn to_frame_size_policy(&self) -> FrameSizePolicy {
-        if self.frame_size_compressed {
-            FrameSizePolicy::Compressed(self.max_frame_size.as_u32())
-        } else {
-            FrameSizePolicy::Uncompressed(self.max_frame_size.as_u32())
+    pub fn to_frame_size_policy(&self) -> zeekstd::FrameSizePolicy {
+        match self.frame_size_policy {
+            FrameSizePolicy::Compressed => {
+                zeekstd::FrameSizePolicy::Compressed(self.frame_size.as_u32())
+            }
+            FrameSizePolicy::Uncompressed => {
+                zeekstd::FrameSizePolicy::Uncompressed(self.frame_size.as_u32())
+            }
         }
     }
 }
@@ -214,6 +226,12 @@ pub struct DecompressArgs {
     pub output_file: Option<PathBuf>,
 }
 
+#[derive(Debug, ValueEnum, Clone)]
+pub enum SeekTableFormat {
+    Head,
+    Foot,
+}
+
 #[derive(Debug, Parser)]
 pub struct ListArgs {
     /// The offset (of the decompressed data) where listing starts. Accepts the special values
@@ -242,6 +260,10 @@ pub struct ListArgs {
     /// specified.
     #[arg(short, long, action)]
     pub detail: bool,
+
+    /// The format of the seek table.
+    #[arg(long, default_value = "foot")]
+    pub seek_table_format: SeekTableFormat,
 
     /// Input file.
     pub input_file: String,

@@ -1,18 +1,27 @@
-use std::io::{Read, Write};
+use std::{
+    fs::File,
+    io::{self, Read, Write},
+};
 
 use anyhow::{Context, Result, anyhow};
 use indicatif::ProgressBar;
-use zeekstd::{EncodeOptions, Encoder};
+use zeekstd::{EncodeOptions, Encoder, seek_table::Format};
 use zstd_safe::{CCtx, CParameter};
 
 use crate::{args::CompressArgs, highbit_64};
 
 pub struct Compressor<'a, W> {
     encoder: Encoder<'a, W>,
+    seek_table_file: Option<File>,
 }
 
 impl<W> Compressor<'_, W> {
-    pub fn new(args: &CompressArgs, prefix_len: Option<u64>, writer: W) -> Result<Self> {
+    pub fn new(
+        args: &CompressArgs,
+        prefix_len: Option<u64>,
+        seek_table_file: Option<File>,
+        writer: W,
+    ) -> Result<Self> {
         let cctx_err = |msg, c| anyhow!("{msg}: {}", zstd_safe::get_error_name(c));
         let mut cctx = CCtx::try_create().context("Failed to create compression context")?;
 
@@ -30,7 +39,10 @@ impl<W> Compressor<'_, W> {
             .into_encoder(writer)
             .context("Failed to create encoder")?;
 
-        Ok(Self { encoder })
+        Ok(Self {
+            encoder,
+            seek_table_file,
+        })
     }
 }
 
@@ -65,10 +77,23 @@ impl<'a, W: Write> Compressor<'a, W> {
             }
         }
 
-        let bytes_written = self
-            .encoder
-            .finish()
-            .context("Failed to finish compression")?;
+        let bytes_written = match self.seek_table_file {
+            Some(mut file) => {
+                self.encoder
+                    .end_frame()
+                    .context("Failed to end last frame")?;
+                self.encoder.flush().context("Failed to flush encoder")?;
+                let written = self.encoder.written_compressed();
+                let st = self.encoder.into_seek_table();
+                let mut ser = st.into_format_serializer(Format::Head);
+                let n = io::copy(&mut ser, &mut file).context("Failed to write seek table")?;
+                written + n
+            }
+            None => self
+                .encoder
+                .finish()
+                .context("Failed to finish compression")?,
+        };
 
         if let Some(b) = bar {
             b.finish_and_clear();

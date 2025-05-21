@@ -14,8 +14,15 @@ pub struct Decompressor<'a> {
 impl Decompressor<'_> {
     pub fn new(args: &DecompressArgs, prefix_len: Option<u64>) -> Result<Self> {
         let mut src = File::open(&args.input_file).context("Failed to open input file")?;
-        let seek_table =
-            SeekTable::from_seekable(&mut src).context("Failed to parse seek table")?;
+        let seek_table = match &args.shared.seek_table_file {
+            Some(path) => {
+                let mut file = File::open(path).context("Failed to open seek table file")?;
+                SeekTable::from_reader(&mut file)
+            }
+            None => SeekTable::from_seekable(&mut src),
+        }
+        .context("Failed to parse seek table")?;
+
         let lower_frame = match args.from_frame {
             Some(idx) => idx,
             None => seek_table.frame_index_decomp(args.from.as_u64()),

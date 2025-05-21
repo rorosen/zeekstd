@@ -30,13 +30,19 @@ runCommand "zeekstd-output-test" { nativeBuildInputs = [ zeekstd ]; } ''
   # Works if forced
   cat num | zeekstd -cf
 
+  # All created files are equal
+  cmp num.zst num2.zst
+  cmp num.zst num3.zst
+
   # Out file isn't created if in file doesn't exist
   zeekstd foo.txt -o bar.zst && exit 1
   ls bar.zst && exit 1
 
-  # All created files are equal
-  cmp num.zst num2.zst
-  cmp num.zst num3.zst
+  # Can always write to /dev/null
+  cat num | zeekstd -o /dev/null --seek-table-file st.bin
+  ls st.bin
+  # Seek table file gets also not overwritten
+  cat num | zeekstd -o /dev/null --seek-table-file st.bin && exit 1
 
   touch $out
 ''

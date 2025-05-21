@@ -4,7 +4,7 @@ use std::{
     io::{self, IsTerminal, Read, Write},
     ops::Deref,
     os::unix::fs::FileTypeExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
@@ -14,7 +14,7 @@ use memmap2::Mmap;
 use zeekstd::SeekTable;
 
 use crate::{
-    args::{CliFlags, CompressArgs, DecompressArgs, ListArgs},
+    args::{CliFlags, CompressArgs, DecompressArgs, ListArgs, SeekTableFormat},
     compress::Compressor,
     decompress::Decompressor,
 };
@@ -41,6 +41,34 @@ pub enum Command {
     /// Print information about seekable Zstandard-compressed files
     #[clap(alias = "l")]
     List(ListArgs),
+}
+
+pub fn checked_out_file(
+    path: &Path,
+    in_path: Option<&str>,
+    is_quiet: bool,
+    force_write_stdout: bool,
+) -> Result<File> {
+    let meta = fs::metadata(path).ok();
+    if !force_write_stdout && path.exists() && !meta.is_some_and(|m| m.file_type().is_char_device())
+    {
+        // Refuse to overwrite existing file when quiet or input via stdin
+        if is_quiet || in_path.is_none() {
+            bail!("{} already exists; not overwritten", path.display());
+        }
+
+        eprint!("{} already exists; overwrite (y/n) ? ", path.display());
+        io::stderr().flush()?;
+        let mut buf = String::new();
+        io::stdin()
+            .read_line(&mut buf)
+            .context("Failed to read stdin")?;
+        if buf.trim_end() != "y" {
+            bail!("{} already exists", path.display());
+        }
+    }
+
+    File::create(path).context("Failed to open output file")
 }
 
 impl Command {
@@ -110,29 +138,7 @@ impl Command {
         let new_writer = || -> Result<Box<dyn Write>> {
             match &out_path {
                 Some(path) => {
-                    let meta = fs::metadata(path).ok();
-                    if !force_write_stdout
-                        && path.exists()
-                        && !meta.is_some_and(|m| m.file_type().is_char_device())
-                    {
-                        // Refuse to overwrite existing files when quiet or input via stdin
-                        if flags.quiet || in_path.is_none() {
-                            bail!("{} already exists; not overwritten", path.display());
-                        }
-
-                        eprint!("{} already exists; overwrite (y/n) ? ", path.display());
-                        io::stderr().flush()?;
-                        let mut buf = String::new();
-                        io::stdin()
-                            .read_line(&mut buf)
-                            .context("Failed to read stdin")?;
-                        if buf.trim_end() != "y" {
-                            bail!("{} already exists", path.display());
-                        }
-                    }
-
-                    File::create(path)
-                        .context("Failed to open output file")
+                    checked_out_file(path, in_path.as_deref(), flags.quiet, force_write_stdout)
                         .map(|f| Box::new(f) as Box<dyn Write>)
                 }
                 None => {
@@ -164,7 +170,17 @@ impl Command {
                     .patch_from
                     .as_ref()
                     .and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
-                let compressor = Compressor::new(&args, prefix_len, new_writer()?)?;
+                let seek_table_file = args
+                    .shared
+                    .seek_table_file
+                    .as_ref()
+                    .map(|p| {
+                        checked_out_file(p, in_path.as_deref(), flags.quiet, force_write_stdout)
+                    })
+                    .transpose()
+                    .context("Failed to create seek table file")?;
+                let compressor =
+                    Compressor::new(&args, prefix_len, seek_table_file, new_writer()?)?;
                 let mode = ExecMode::Compress {
                     reader,
                     compressor,
@@ -206,9 +222,12 @@ impl Command {
             }
             Command::List(args) => {
                 let mut file = File::open(&args.input_file).context("Failed to open input file")?;
-                let seek_table = SeekTable::from_seekable(&mut file)
-                    .or_else(|_| SeekTable::from_reader(&file))
-                    .context("Failed to read seek table")?;
+                let seek_table = match args.seek_table_format {
+                    SeekTableFormat::Head => SeekTable::from_reader(&mut file),
+                    SeekTableFormat::Foot => SeekTable::from_seekable(&mut file),
+                }
+                .context("Failed to read seek table")?;
+
                 let start_frame = args.start_frame(&seek_table);
                 let end_frame = args.end_frame(&seek_table);
                 let mode = ExecMode::List {
