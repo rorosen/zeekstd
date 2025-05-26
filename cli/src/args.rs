@@ -1,9 +1,9 @@
 use std::{fs, path::PathBuf, str::FromStr};
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use clap::{Parser, ValueEnum};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use zeekstd::{CompressionLevel, SeekTable};
+use zeekstd::CompressionLevel;
 
 // 128 MiB
 const MMAP_THRESHOLD: u64 = 0x100000;
@@ -12,10 +12,6 @@ const MMAP_THRESHOLD: u64 = 0x100000;
 pub struct ByteValue(u32);
 
 impl ByteValue {
-    pub fn as_u64(&self) -> u64 {
-        self.0 as u64
-    }
-
     pub fn as_u32(&self) -> u32 {
         self.0
     }
@@ -25,50 +21,23 @@ impl FromStr for ByteValue {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (value, unit): (String, String) = s
+        const ERRMSG: &str = "Byte value too large";
+        let value: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let unit: String = s[value.len()..]
             .chars()
             .filter(|c| !c.is_whitespace())
-            .partition(|c| c.is_ascii_digit());
-        let value = value.parse()?;
+            .collect();
+        let value: u32 = value.parse()?;
 
         let value = match unit.as_str() {
             "B" | "" => value,
-            "K" | "kib" => value * 1024,
-            "M" | "mib" => value * 1024 * 1024,
-            "G" | "gib" => value * 1024 * 1024 * 1024,
+            "K" | "kib" => value.checked_mul(1024).context(ERRMSG)?,
+            "M" | "mib" => value.checked_mul(1024 * 1024).context(ERRMSG)?,
+            "G" | "gib" => value.checked_mul(1024 * 1024 * 1024).context(ERRMSG)?,
             _ => bail!("Unknown unit: {unit:?}"),
         };
 
         Ok(Self(value))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ByteOffset(u64);
-
-impl ByteOffset {
-    pub fn as_u64(&self) -> u64 {
-        self.0
-    }
-}
-
-impl From<ByteValue> for ByteOffset {
-    fn from(value: ByteValue) -> Self {
-        Self(value.as_u64())
-    }
-}
-
-impl FromStr for ByteOffset {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let this = match s.to_lowercase().as_str() {
-            "start" => Self(0),
-            "end" => Self(u64::MAX),
-            _ => Self::from(ByteValue::from_str(s)?),
-        };
-
-        Ok(this)
     }
 }
 
@@ -196,23 +165,13 @@ pub struct DecompressArgs {
     #[clap(flatten)]
     pub shared: SharedArgs,
 
-    /// The offset (of the uncompressed data) where decompression starts. Accepts the special
-    /// values 'start' and 'end'.
-    #[arg(long, group = "start", default_value = "start")]
-    pub from: ByteOffset,
-
     /// The frame number at which decompression starts.
-    #[arg(long, group = "start")]
-    pub from_frame: Option<u32>,
+    #[arg(long, group = "start", default_value_t = 0)]
+    pub from: u32,
 
-    /// The offset (of the decompressed data) where decompression ends. Accepts the special
-    /// values 'start' and 'end'.
-    #[arg(long, group = "end", default_value = "end")]
-    pub to: ByteOffset,
-
-    /// The frame number at which decompression ends (inclusive).
-    #[arg(long, group = "end")]
-    pub to_frame: Option<u32>,
+    /// The frame number at which decompression ends (inclusive). Accepts special value 'end'.
+    #[arg(long, group = "end", value_parser = parse_end_frame, default_value = "end")]
+    pub to: u32,
 
     /// Provide a reference point for Zstandard's diff engine.
     #[arg(long)]
@@ -234,23 +193,13 @@ pub enum SeekTableFormat {
 
 #[derive(Debug, Parser)]
 pub struct ListArgs {
-    /// The offset (of the decompressed data) where listing starts. Accepts the special values
-    /// 'start' and 'end'.
-    #[arg(long, group = "start")]
-    pub from: Option<ByteOffset>,
-
     /// The frame number at which listing starts.
-    #[arg(long, group = "start")]
-    pub from_frame: Option<u32>,
+    #[arg(long)]
+    pub from: Option<u32>,
 
-    /// The offset (of the decompressed data) where lisitng ends. Accepts the special values
-    /// 'start' and 'end'.
-    #[arg(long, group = "end")]
-    pub to: Option<ByteOffset>,
-
-    /// The frame number at which listing ends.
-    #[arg(long, group = "end")]
-    pub to_frame: Option<u32>,
+    /// The frame number at which listing ends (inclusive). Accepts special value 'end'.
+    #[arg(long, value_parser = parse_end_frame)]
+    pub to: Option<u32>,
 
     /// The number of frames that should be listed.
     #[arg(long, group = "end")]
@@ -269,27 +218,13 @@ pub struct ListArgs {
     pub input_file: String,
 }
 
-impl ListArgs {
-    pub fn start_frame(&self, seek_table: &SeekTable) -> Option<u32> {
-        if self.from_frame.is_some() {
-            self.from_frame
-        } else {
-            self.from
-                .as_ref()
-                .map(|offset| seek_table.frame_index_decomp(offset.as_u64()))
-        }
-    }
+fn parse_end_frame(arg: &str) -> anyhow::Result<u32> {
+    let this = match arg.to_lowercase().as_str() {
+        "end" => u32::MAX,
+        val => val.parse()?,
+    };
 
-    pub fn end_frame(&self, seek_table: &SeekTable) -> Option<u32> {
-        if self.to_frame.is_some() {
-            self.to_frame
-        } else if let Some(offset) = &self.to {
-            Some(seek_table.frame_index_decomp(offset.as_u64()))
-        } else {
-            self.num_frames
-                .map(|num| self.start_frame(seek_table).unwrap_or(0) + num)
-        }
-    }
+    Ok(this)
 }
 
 #[cfg(test)]
@@ -367,22 +302,12 @@ mod tests {
     }
 
     #[test]
-    fn decompress_position_start() {
-        for input in ["start", "Start", "StARt", "START"] {
-            let result = ByteOffset::from_str(input);
-            assert!(result.is_ok());
-            let parsed_value = result.unwrap();
-            assert_eq!(parsed_value.0, 0);
-        }
-    }
-
-    #[test]
-    fn decompress_position_end() {
+    fn decompress_end_frame() {
         for input in ["end", "End", "eND", "END"] {
-            let result = ByteOffset::from_str(input);
+            let result = parse_end_frame(input);
             assert!(result.is_ok());
             let parsed_value = result.unwrap();
-            assert_eq!(parsed_value.0, u64::MAX);
+            assert_eq!(parsed_value, u32::MAX);
         }
     }
 }

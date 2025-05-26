@@ -23,13 +23,10 @@ impl Decompressor<'_> {
         }
         .context("Failed to parse seek table")?;
 
-        let lower_frame = match args.from_frame {
-            Some(idx) => idx,
-            None => seek_table.frame_index_decomp(args.from.as_u64()),
-        };
-        let upper_frame = match args.to_frame {
-            Some(idx) => idx,
-            None => seek_table.frame_index_decomp(args.to.as_u64()),
+        let upper_frame = if args.to > seek_table.num_frames() {
+            seek_table.num_frames() - 1
+        } else {
+            args.to
         };
 
         let mut dctx = DCtx::try_create().context("Failed to create decompression context")?;
@@ -45,7 +42,7 @@ impl Decompressor<'_> {
 
         let decoder = DecodeOptions::with_dctx(src, dctx)
             .seek_table(seek_table)
-            .lower_frame(lower_frame)
+            .lower_frame(args.from)
             .upper_frame(upper_frame)
             .into_decoder()
             .context("Failed to create decoder")?;

@@ -228,11 +228,15 @@ impl Command {
                 }
                 .context("Failed to read seek table")?;
 
-                let start_frame = args.start_frame(&seek_table);
-                let end_frame = args.end_frame(&seek_table);
+                let end_frame = if args.to.is_some_and(|to| to > seek_table.num_frames()) {
+                    Some(seek_table.num_frames() - 1)
+                } else {
+                    args.to
+                };
+
                 let mode = ExecMode::List {
                     seek_table,
-                    start_frame,
+                    start_frame: args.from,
                     end_frame,
                     detail: args.detail,
                 };
@@ -405,9 +409,8 @@ fn list_frames(
 ) -> Result<()> {
     use std::fmt::Write as _;
 
-    let frame_err = |index| format!("Failed to get data of frame {index}");
     let start = start_frame.unwrap_or(0);
-    let end = end_frame.unwrap_or_else(|| st.num_frames());
+    let end = end_frame.unwrap_or_else(|| st.num_frames() - 1);
     if start > end {
         bail!("Start frame ({start}) cannot be greater than end frame ({end})");
     }
@@ -420,11 +423,11 @@ fn list_frames(
     );
 
     let mut cnt = 0;
-    for n in start..end {
-        let comp = (byte_fmt)(st.frame_size_comp(n).with_context(|| frame_err(n))?);
-        let uncomp = (byte_fmt)(st.frame_size_decomp(n).with_context(|| frame_err(n))?);
-        let comp_off = (byte_fmt)(st.frame_start_comp(n).with_context(|| frame_err(n))?);
-        let uncomp_off = (byte_fmt)(st.frame_start_decomp(n).with_context(|| frame_err(n))?);
+    for n in start..=end {
+        let comp = (byte_fmt)(st.frame_size_comp(n)?);
+        let uncomp = (byte_fmt)(st.frame_size_decomp(n)?);
+        let comp_off = (byte_fmt)(st.frame_start_comp(n)?);
+        let uncomp_off = (byte_fmt)(st.frame_start_decomp(n)?);
 
         writeln!(
             &mut buf,
