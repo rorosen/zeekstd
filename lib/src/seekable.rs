@@ -6,14 +6,33 @@ use crate::{
 /// Represents a seekable source.
 pub trait Seekable {
     /// Sets the read offset from the start of the seekable.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the offset cannot be set. e.g. because it is out of range.
     fn set_offset(&mut self, offset: u64) -> Result<()>;
+
     /// Pull some bytes from this source into `buf`, returning how many bytes were read.
+    ///
+    /// # Errors
+    ///
+    /// If the read operation fails.
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
+
     /// Returns the footer of this seekable.
     ///
     /// The footer typically contains the integrity field of the seek table.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the footer cannot be retrieved.
     fn seek_table_footer(&mut self) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]>;
+
     /// Seeks to the start of the seek table.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `seek_table_size` is out of range.
     fn seek_to_seek_table_start(&mut self, seek_table_size: usize) -> Result<()>;
 }
 
@@ -51,7 +70,12 @@ impl Seekable for BytesWrapper<'_> {
 
     fn seek_table_footer(&mut self) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]> {
         let mut buf = [0u8; SEEK_TABLE_INTEGRITY_SIZE];
-        buf.copy_from_slice(&self.src[self.src.len() - SEEK_TABLE_INTEGRITY_SIZE..]);
+        let start_offset = self
+            .src
+            .len()
+            .checked_sub(SEEK_TABLE_INTEGRITY_SIZE)
+            .ok_or(Error::other("invalid integrity field"))?;
+        buf.copy_from_slice(&self.src[start_offset..]);
 
         Ok(buf)
     }

@@ -6,7 +6,7 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use zeekstd::CompressionLevel;
 
 // 128 MiB
-const MMAP_THRESHOLD: u64 = 0x100000;
+const MMAP_THRESHOLD: u64 = 0x0010_0000;
 
 #[derive(Debug, Clone)]
 pub struct ByteValue(u32);
@@ -22,7 +22,7 @@ impl FromStr for ByteValue {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         const ERRMSG: &str = "Byte value too large";
-        let value: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let value: String = s.chars().take_while(char::is_ascii_digit).collect();
         let unit: String = s[value.len()..]
             .chars()
             .filter(|c| !c.is_whitespace())

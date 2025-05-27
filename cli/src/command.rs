@@ -26,9 +26,10 @@ fn human_bytes(n: u64) -> String {
 
 #[inline]
 fn raw_bytes(n: u64) -> String {
-    format!("{}", n)
+    format!("{n}")
 }
 
+#[allow(clippy::doc_markdown)]
 #[derive(Debug, Subcommand)]
 #[command(arg_required_else_help(true))]
 pub enum Command {
@@ -104,7 +105,7 @@ impl Command {
         let is_stdout = match self {
             Self::Compress(CompressArgs { shared, .. })
             | Self::Decompress(DecompressArgs { shared, .. }) => shared.stdout,
-            _ => false,
+            Self::List(_) => false,
         };
         if is_stdout {
             return None;
@@ -129,26 +130,24 @@ impl Command {
         }
     }
 
-    pub fn run(self, flags: CliFlags) -> Result<()> {
+    #[allow(clippy::too_many_lines)]
+    pub fn run(self, flags: &CliFlags) -> Result<()> {
         let in_path = self.in_path();
         let out_path = self.out_path();
         let force_write_stdout = self.force_write_stdout();
 
         // This is a closure so the writer can be created after the input has been validated
         let new_writer = || -> Result<Box<dyn Write>> {
-            match &out_path {
-                Some(path) => {
-                    checked_out_file(path, in_path.as_deref(), flags.quiet, force_write_stdout)
-                        .map(|f| Box::new(f) as Box<dyn Write>)
+            if let Some(path) = &out_path {
+                checked_out_file(path, in_path.as_deref(), flags.quiet, force_write_stdout)
+                    .map(|f| Box::new(f) as Box<dyn Write>)
+            } else {
+                let stdout = io::stdout();
+                if !force_write_stdout && stdout.is_terminal() {
+                    bail!("stdout is a terminal, aborting");
                 }
-                None => {
-                    let stdout = io::stdout();
-                    if !force_write_stdout && stdout.is_terminal() {
-                        bail!("stdout is a terminal, aborting");
-                    }
 
-                    Ok(Box::new(stdout))
-                }
+                Ok(Box::new(stdout))
             }
         };
 
@@ -187,7 +186,7 @@ impl Command {
                     prefix: args.patch_from,
                     mmap_prefix: args.shared.use_mmap(prefix_len),
                     out_path: out_path
-                        .and_then(|p| p.to_str().map(|s| s.into()))
+                        .and_then(|p| p.to_str().map(Into::into))
                         .unwrap_or("STDOUT".into()),
                     bar: flags.progress_bar(in_path.as_deref()),
                 };
@@ -284,6 +283,7 @@ struct Executor<'a> {
 }
 
 impl Executor<'_> {
+    #[allow(clippy::cast_precision_loss)]
     fn run(self) -> Result<()> {
         match self.mode {
             ExecMode::Compress {
@@ -337,7 +337,7 @@ impl Executor<'_> {
                     list_frames(&seek_table, start_frame, end_frame, self.byte_fmt)?;
                 }
             }
-        };
+        }
 
         Ok(())
     }
@@ -379,6 +379,7 @@ impl Deref for Prefix {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn list_summarize(st: &SeekTable, in_path: &str, byte_fmt: fn(u64) -> String) {
     let num_frames = st.num_frames();
     let compressed = st

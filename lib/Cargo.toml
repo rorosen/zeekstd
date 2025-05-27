@@ -20,3 +20,6 @@ xxhash-rust = { version = "0.8.15", features = ["xxh64"] }
 [dev-dependencies.zstd-safe]
 workspace = true
 features = ["seekable"]
+
+[lints]
+workspace = true

@@ -176,11 +176,19 @@ impl<'a> RawEncoder<'a> {
     /// Creates a new `RawEncoder` with default parameters.
     ///
     /// This is equivalent to calling `EncodeOptions::new().into_raw()`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the raw encoder could not be created.
     pub fn new() -> Result<Self> {
         Self::with_opts(EncodeOptions::new())
     }
 
     /// Creates a new `RawEncoder` with the given [`EncodeOptions`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if the raw encoder could not be created.
     pub fn with_opts(mut opts: EncodeOptions<'a>) -> Result<Self> {
         opts.cctx
             .set_parameter(CParameter::CompressionLevel(opts.compression_level))?;
@@ -209,6 +217,10 @@ impl<'a> RawEncoder<'a> {
     /// operation, with non-negligible impact on latency. This should be avoided for small frame
     /// sizes. If there is a need to use the same prefix multiple times without long distance mode,
     /// consider loading a dictionary into the compression context instead.
+    ///
+    /// # Errors
+    ///
+    /// If compression fails or any parameter is invalid.
     pub fn compress_with_prefix<'b: 'a>(
         &mut self,
         input: &[u8],
@@ -281,6 +293,10 @@ impl RawEncoder<'_> {
     /// `o` is the output progress, i.e. the number of bytes written to `output`. The caller
     /// must check if `input` has been entirely consumed. If not, the caller must make some room
     /// to receive more compressed data, and then present again remaining input data.
+    ///
+    /// # Errors
+    ///
+    /// If compression fails or any parameter is invalid.
     pub fn compress(&mut self, input: &[u8], output: &mut [u8]) -> Result<(usize, usize)> {
         self.compress_with_prefix(input, output, None)
     }
@@ -290,6 +306,10 @@ impl RawEncoder<'_> {
     /// Call this repetitively to write the frame epilogue to `output`. Returns two numbers,
     /// `(o, n)` where `o` is the number of bytes written to `output`, and `n` is a minimal
     /// estimation of the bytes left to flush. Should be called until `n` is zero.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the frame epilogue cannot be created or the frame limit is reached.
     pub fn end_frame(&mut self, output: &mut [u8]) -> Result<(usize, usize)> {
         let mut empty_buf = InBuffer::around(&[]);
         let mut out_buf = OutBuffer::around(output);
@@ -335,6 +355,7 @@ impl RawEncoder<'_> {
     ///
     /// This will discard any compression progress for the current frame and resets the
     /// compression session.
+    #[allow(clippy::missing_panics_doc)]
     pub fn reset_frame(&mut self) {
         self.frame_c_size = 0;
         self.frame_d_size = 0;
@@ -375,11 +396,19 @@ impl<'a, W> Encoder<'a, W> {
     /// Creates a new `Encoder` with default parameters.
     ///
     /// This is equivalent to calling `EncodeOptions::new().into_encoder(writer)`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the encoder could not be created.
     pub fn new(writer: W) -> Result<Self> {
         Self::with_opts(writer, EncodeOptions::new())
     }
 
     /// Creates a new `Encoder` with the given [`EncodeOptions`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if the encoder could not be created.
     pub fn with_opts(writer: W, opts: EncodeOptions<'a>) -> Result<Self> {
         Ok(Self {
             raw: opts.into_raw()?,
@@ -407,6 +436,10 @@ impl<'a, W: std::io::Write> Encoder<'a, W> {
     /// operation, with non-negligible impact on latency. This should be avoided for small frame
     /// sizes. If there is a need to use the same prefix multiple times without long distance mode,
     /// consider loading a dictionary into the compression context instead.
+    ///
+    /// # Errors
+    ///
+    /// If compression fails or any parameter is invalid.
     pub fn compress_with_prefix<'b: 'a>(
         &mut self,
         buf: &[u8],
@@ -453,6 +486,10 @@ impl<W: std::io::Write> Encoder<'_, W> {
     /// # Ok::<(), zeekstd::Error>(())
     ///
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// If compression fails or any parameter is invalid.
     pub fn compress(&mut self, buf: &[u8]) -> Result<usize> {
         self.compress_with_prefix(buf, None)
     }
@@ -461,6 +498,10 @@ impl<W: std::io::Write> Encoder<'_, W> {
     ///
     /// Call this to write the frame epilogue to the internal writer. Returns the number of bytes
     /// written.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the frame epilogue cannot be created or the frame limit is reached.
     pub fn end_frame(&mut self) -> Result<usize> {
         let mut progress = 0;
 
@@ -496,11 +537,19 @@ impl<W: std::io::Write> Encoder<'_, W> {
     /// # Ok::<(), zeekstd::Error>(())
     ///
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Fails if the frame cannot be finished or writing the seek table fails.
     pub fn finish(self) -> Result<u64> {
         self.finish_format(Format::Foot)
     }
 
     /// Ends the current frame and writes the seek table in the given format.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the frame cannot be finished or writing the seek table fails.
     pub fn finish_format(mut self, format: Format) -> Result<u64> {
         self.end_frame()?;
         let mut ser = self.raw.into_seek_table().into_format_serializer(format);

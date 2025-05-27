@@ -21,3 +21,6 @@ indicatif = "0.17.11"
 memmap2 = "0.9.5"
 zeekstd = { path = "../lib" }
 zstd-safe.workspace = true
+
+[lints]
+workspace = true

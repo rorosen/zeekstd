@@ -8,8 +8,17 @@ license = "BSD-2-Clause"
 homepage = "https://github.com/rorosen/zeekstd"
 repository = "https://github.com/rorosen/zeekstd"
 readme = "README.md"
-keywords = [ "zstd", "zstandard", "compression", "zstd-seekable-format" ]
-categories = [ "compression" ]
+keywords = ["zstd", "zstandard", "compression", "zstd-seekable-format"]
+categories = ["compression"]
 
 [workspace.dependencies]
 zstd-safe = { version = "7.2.4", features = ["std"] }
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+cast_possible_wrap = "allow"
+cast_possible_truncation = "allow"
+cast-lossless = "allow"
+must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+struct-excessive-bools = "allow"

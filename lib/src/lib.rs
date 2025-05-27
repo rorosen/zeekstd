@@ -74,13 +74,13 @@ pub use seekable::{BytesWrapper, Seekable};
 pub use zstd_safe::CompressionLevel;
 
 /// The magic number of the seek table integrity field.
-pub const SEEKABLE_MAGIC_NUMBER: u32 = 0x8F92EAB1;
+pub const SEEKABLE_MAGIC_NUMBER: u32 = 0x8F92_EAB1;
 /// The maximum number of frames in a seekable archive.
-pub const SEEKABLE_MAX_FRAMES: u32 = 0x8000000;
+pub const SEEKABLE_MAX_FRAMES: u32 = 0x0800_0000;
 /// The size of the seek table integrity field.
 pub const SEEK_TABLE_INTEGRITY_SIZE: usize = 9;
 /// The maximum size of the uncompressed data of a frame.
-pub const SEEKABLE_MAX_FRAME_SIZE: usize = 0x40000000;
+pub const SEEKABLE_MAX_FRAME_SIZE: usize = 0x4000_0000;
 
 #[doc = include_str!("../../README.md")]
 #[cfg(doctest)]
@@ -100,9 +100,7 @@ mod tests {
     pub const LINES_IN_DOC: u32 = 200_384;
 
     fn highbit_64(mut v: usize) -> u32 {
-        if v == 0 {
-            panic!("Cannot get highest bit position of zero");
-        }
+        assert!((v > 0), "Cannot get highest bit position of zero");
 
         let mut count = 0;
         v >>= 1;
@@ -117,7 +115,7 @@ mod tests {
     pub fn generate_input(num_lines: u32) -> Cursor<Vec<u8>> {
         let mut input = Cursor::new(Vec::with_capacity((LINE_LEN * num_lines) as usize));
         for i in 0..num_lines {
-            writeln!(&mut input, "Hello from line {:06}", i).unwrap();
+            writeln!(&mut input, "Hello from line {i:06}").unwrap();
         }
 
         input.set_position(0);
@@ -143,7 +141,7 @@ mod tests {
 
         let mut num_line = 0;
         for line in output.clone().lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            assert_eq!(line, format!("Hello from line {num_line:06}"));
             num_line += 1;
         }
         assert_eq!(num_line, LINES_IN_DOC);
@@ -205,7 +203,7 @@ mod tests {
         output.set_position(0);
         let mut num_line = 0;
         for line in output.clone().lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            assert_eq!(line, format!("Hello from line {num_line:06}"));
             num_line += 1;
         }
         assert_eq!(num_line, LINES_IN_DOC);

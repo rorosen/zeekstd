@@ -86,6 +86,10 @@ impl<'a, S> DecodeOptions<'a, S> {
 
 impl<'a, S: Seekable> DecodeOptions<'a, S> {
     /// Builds a [`Decoder`] with the configuration.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the decoder could not created.
     pub fn into_decoder(self) -> Result<Decoder<'a, S>> {
         Decoder::with_opts(self)
     }
@@ -111,11 +115,19 @@ impl<'a, S: Seekable> Decoder<'a, S> {
     /// Creates a new `Decoder` with default parameters and `src` as source.
     ///
     /// This is equivalent to calling `DecodeOptions::new(src).into_decoder()`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the decoder could not created.
     pub fn new(src: S) -> Result<Self> {
         Self::with_opts(DecodeOptions::new(src))
     }
 
     /// Creates a new `Decoder` with the given [`DecodeOptions`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if the decoder could not created.
     pub fn with_opts(mut opts: DecodeOptions<'a, S>) -> Result<Self> {
         let seek_table = opts
             .seek_table
@@ -147,6 +159,11 @@ impl<'a, S: Seekable> Decoder<'a, S> {
     ///
     /// If a `prefix` is passed, it will be re-applied to every frame, as tables are discarded at
     /// end of frame. Referencing a raw content prefix has almost no cpu nor memory cost.
+    ///
+    /// # Errors
+    ///
+    /// If decompression fails or any parameter is invalid.
+    #[allow(clippy::missing_panics_doc)]
     pub fn decompress_with_prefix<'b: 'a>(
         &mut self,
         buf: &mut [u8],
@@ -207,11 +224,16 @@ impl<S: Seekable> Decoder<'_, S> {
     ///
     /// Call this repetetively to fill `buf` with decompressed data. Returns the number of bytes
     /// written to `buf`.
+    ///
+    /// # Errors
+    ///
+    /// If decompression fails or any parameter is invalid.
     pub fn decompress(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.decompress_with_prefix(buf, None)
     }
 
     /// Resets the current decompresion status.
+    #[allow(clippy::missing_panics_doc)]
     pub fn reset(&mut self) {
         self.dctx
             .reset(ResetDirective::SessionOnly)
@@ -294,7 +316,7 @@ mod tests {
 
         let mut num_line = 0;
         for line in output.clone().lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            assert_eq!(line, format!("Hello from line {num_line:06}"));
             num_line += 1;
         }
         assert_eq!(num_line, LINES_IN_DOC);
@@ -312,7 +334,7 @@ mod tests {
         output.set_position(0);
         let mut num_line = 0;
         for line in output.lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            assert_eq!(line, format!("Hello from line {num_line:06}"));
             num_line += 1;
         }
         assert_eq!(num_line, 7 * LINES_IN_FRAME);
@@ -325,7 +347,7 @@ mod tests {
         output.set_position(0);
         let mut num_line = (num_frames - 14) * LINES_IN_FRAME;
         for line in output.lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            assert_eq!(line, format!("Hello from line {num_line:06}"));
             num_line += 1;
         }
         assert_eq!(num_line, LINES_IN_DOC);
@@ -358,7 +380,7 @@ mod tests {
 
         let mut num_line = 0;
         for line in output.clone().lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {:06}", num_line));
+            assert_eq!(line, format!("Hello from line {num_line:06}"));
             num_line += 1;
         }
         assert_eq!(num_line, LINES_IN_DOC);

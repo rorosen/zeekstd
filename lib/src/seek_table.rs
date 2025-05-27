@@ -321,7 +321,7 @@ impl SeekTable {
             buf.copy_within(n.., 0);
             if src.read(&mut buf[len - n..])? == 0 {
                 break;
-            };
+            }
         }
         parser.verify()?;
 
@@ -379,7 +379,7 @@ impl SeekTable {
         loop {
             if reader.read(&mut buf[offset..])? == 0 {
                 break;
-            };
+            }
             let n = parser.parse_entries(&buf);
             if n == 0 {
                 break;
@@ -508,6 +508,7 @@ impl SeekTable {
     }
 
     /// The maximum compressed frame size.
+    #[allow(clippy::missing_panics_doc)]
     pub fn max_frame_size_comp(&self) -> u64 {
         (0..self.num_frames())
             .map(|i| {
@@ -519,6 +520,7 @@ impl SeekTable {
     }
 
     /// The maximum decompressed frame size.
+    #[allow(clippy::missing_panics_doc)]
     pub fn max_frame_size_decomp(&self) -> u64 {
         (0..self.num_frames())
             .map(|i| {

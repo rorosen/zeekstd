@@ -40,5 +40,5 @@ fn main() -> Result<()> {
 
     cli.command
         .unwrap_or(Command::Compress(cli.compress_args))
-        .run(cli.flags)
+        .run(&cli.flags)
 }
