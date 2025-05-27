@@ -1,5 +1,6 @@
 # Zeekstd
 
+[![Nix CI](https://github.com/rorosen/zeekstd/actions/workflows/nix.yaml/badge.svg)](https://github.com/rorosen/zeekstd/actions/workflows/nix.yaml)
 [![Crates.io](https://img.shields.io/crates/v/zeekstd.svg)](https://crates.io/crates/zeekstd)
 [![Documentation](https://docs.rs/zeekstd/badge.svg)](https://docs.rs/zeekstd)
 
