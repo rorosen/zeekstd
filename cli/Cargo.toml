@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.98"
-clap = { version = "4.5.36", features = ["derive"] }
+clap = { version = "4.5.38", features = ["derive"] }
 indicatif = "0.17.11"
 memmap2 = "0.9.5"
 zeekstd = { path = "../lib" }
