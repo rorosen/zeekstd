@@ -24,9 +24,9 @@ pub struct DecodeOptions<'a, S> {
     src: S,
     seek_table: Option<SeekTable>,
     lower_frame: Option<u32>,
-    lower_offset: Option<u64>,
+    offset: Option<u64>,
     upper_frame: Option<u32>,
-    upper_offset: Option<u64>,
+    offset_limit: Option<u64>,
 }
 
 impl<'a, S> DecodeOptions<'a, S> {
@@ -54,9 +54,9 @@ impl<'a, S> DecodeOptions<'a, S> {
             src,
             seek_table: None,
             lower_frame: None,
-            lower_offset: None,
+            offset: None,
             upper_frame: None,
-            upper_offset: None,
+            offset_limit: None,
         }
     }
 
@@ -96,7 +96,7 @@ impl<'a, S> DecodeOptions<'a, S> {
     /// The offset is the position in the decompressed data of the seekable source from which
     /// decompression starts.
     pub fn offset(mut self, offset: u64) -> Self {
-        self.lower_offset = Some(offset);
+        self.offset = Some(offset);
         self
     }
 
@@ -104,8 +104,8 @@ impl<'a, S> DecodeOptions<'a, S> {
     ///
     /// The limit is the position in the decompressed data of the seekable source at which
     /// decompresion stops.
-    pub fn offset_limit(mut self, offset: u64) -> Self {
-        self.upper_offset = Some(offset);
+    pub fn offset_limit(mut self, limit: u64) -> Self {
+        self.offset_limit = Some(limit);
         self
     }
 }
@@ -163,7 +163,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
         let offset = if let Some(index) = opts.lower_frame {
             seek_table.frame_start_decomp(index)?
         } else {
-            opts.lower_offset.unwrap_or(0)
+            opts.offset.unwrap_or(0)
         };
 
         if offset > seek_table.size_decomp() {
@@ -173,7 +173,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
         let offset_limit = if let Some(index) = opts.upper_frame {
             seek_table.frame_end_decomp(index)?
         } else {
-            opts.upper_offset
+            opts.offset_limit
                 .unwrap_or_else(|| seek_table.size_decomp())
         };
 
@@ -264,6 +264,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
             self.decomp_pos += out_buffer.pos() as u64;
             self.in_buf_pos += in_buffer.pos();
             self.read_compressed += in_buffer.pos() as u64;
+
             // Only add to progress if we actually wrote something to buf
             if self.decomp_pos > self.offset {
                 self.offset += out_buffer.pos() as u64;
@@ -389,9 +390,19 @@ impl<S: Seekable> Decoder<'_, S> {
         self.read_compressed
     }
 
-    /// Returns a reference to the internal [`SeekTable`].
+    /// Gets a reference to the internal [`SeekTable`].
     pub fn seek_table(&self) -> &SeekTable {
         &self.seek_table
+    }
+
+    /// Gets the current offset of this decoder.
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// Gets the offset limit of this decoder.
+    pub fn offset_limit(&self) -> u64 {
+        self.offset_limit
     }
 }
 
@@ -599,7 +610,6 @@ mod tests {
         assert!(decoder.set_offset(offset).is_ok());
         assert!(decoder.set_offset_limit(offset).is_ok());
 
-        // Offset out of range
         offset += 1;
         assert!(
             decoder
@@ -630,6 +640,9 @@ mod tests {
 
         // Reset unsets offset and limit
         decoder.reset();
+        assert_eq!(decoder.offset(), 0);
+        assert_eq!(decoder.offset_limit(), decoder.seek_table().size_decomp());
+        assert_eq!(decoder.read_compressed(), 0);
         verify_decomp(&mut decoder, 0, LINES_IN_DOC);
     }
 
@@ -649,6 +662,7 @@ mod tests {
         decoder
             .seek(SeekFrom::End(-(111 * LINE_LEN as i64)))
             .unwrap();
+        assert_eq!(decoder.read_compressed(), 0);
         verify_decomp(&mut decoder, LINES_IN_DOC - 111, LINES_IN_DOC - 1);
 
         // Positive seek from current
@@ -665,5 +679,38 @@ mod tests {
         decoder.seek(SeekFrom::End(-(2 * LINE_LEN as i64))).unwrap();
         decoder.read_exact(&mut [0; LINE_LEN as usize]).unwrap();
         verify_decomp(&mut decoder, LINES_IN_DOC - 1, LINES_IN_DOC - 1);
+    }
+
+    #[test]
+    fn seek_within_frame_continues_decompression() {
+        let (_, seekable) = input_and_seekable();
+        let mut decoder = Decoder::new(seekable).unwrap();
+        assert_eq!(decoder.read_compressed(), 0);
+
+        decoder.seek(SeekFrom::Start(10 * LINE_LEN as u64)).unwrap();
+        decoder.read_exact(&mut [0; LINE_LEN as usize]).unwrap();
+        assert_ne!(decoder.read_compressed(), 0);
+
+        decoder.seek(SeekFrom::Start(16 * LINE_LEN as u64)).unwrap();
+        assert_ne!(decoder.read_compressed(), 0);
+        verify_decomp(&mut decoder, 16, LINES_IN_DOC);
+
+        decoder.seek(SeekFrom::End(-(LINE_LEN as i64))).unwrap();
+        assert_eq!(decoder.read_compressed(), 0);
+        verify_decomp(&mut decoder, LINES_IN_DOC - 1, LINES_IN_DOC);
+    }
+
+    #[test]
+    fn offset_gets_set_correctly() {
+        let (_, seekable) = input_and_seekable();
+        let mut decoder = Decoder::new(seekable).unwrap();
+        assert_eq!(decoder.offset(), 0);
+
+        decoder.set_offset((555 * LINE_LEN).into()).unwrap();
+        assert_eq!(decoder.offset(), (555 * LINE_LEN).into());
+        decoder.seek(SeekFrom::Start(10 * LINE_LEN as u64)).unwrap();
+        assert_eq!(decoder.offset(), (10 * LINE_LEN).into());
+        decoder.read_exact(&mut [0; LINE_LEN as usize]).unwrap();
+        assert_eq!(decoder.offset(), (11 * LINE_LEN).into());
     }
 }
