@@ -413,7 +413,7 @@ impl SeekTable {
 
     /// The number of frames in the seek table.
     pub fn num_frames(&self) -> u32 {
-        // Can always be casted (max value SEEKABLE_MAX_FRAMES)
+        // Cast is always possible (max value SEEKABLE_MAX_FRAMES)
         (self.entries.0.len() - 1) as u32
     }
 
@@ -529,6 +529,30 @@ impl SeekTable {
             })
             .max()
             .unwrap_or(0)
+    }
+
+    /// The compressed size of the seekable archive.
+    ///
+    /// This is equivalent to calling [`Self::frame_end_comp`] with the index of the last frame.
+    #[allow(clippy::missing_panics_doc)]
+    pub fn size_comp(&self) -> u64 {
+        self.entries
+            .0
+            .last()
+            .expect("Seek table entries are never empty")
+            .c_offset
+    }
+
+    /// The decompressed size of the seekable archive.
+    ///
+    /// This is equivalent to calling [`Self::frame_end_decomp`] with the index of the last frame.
+    #[allow(clippy::missing_panics_doc)]
+    pub fn size_decomp(&self) -> u64 {
+        self.entries
+            .0
+            .last()
+            .expect("Seek table entries are never empty")
+            .d_offset
     }
 
     /// Convert this seek table in an immutable, serializable form.
