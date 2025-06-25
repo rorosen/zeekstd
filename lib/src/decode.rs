@@ -166,9 +166,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
             opts.offset.unwrap_or(0)
         };
 
-        if offset > seek_table.size_decomp() {
-            return Err(Error::offset_out_of_range());
-        }
+        Self::check_offset(offset, &seek_table)?;
 
         let offset_limit = if let Some(index) = opts.upper_frame {
             seek_table.frame_end_decomp(index)?
@@ -177,9 +175,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
                 .unwrap_or_else(|| seek_table.size_decomp())
         };
 
-        if offset_limit > seek_table.size_decomp() {
-            return Err(Error::offset_out_of_range());
-        }
+        Self::check_offset(offset_limit, &seek_table)?;
 
         Ok(Self {
             dctx: opts.dctx,
@@ -236,7 +232,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
 
             let mut in_buffer = InBuffer::around(&self.in_buf[self.in_buf_pos..self.in_buf_limit]);
             let mut out_buffer = if self.decomp_pos < self.offset {
-                // dummy decompression until we get to lower offset
+                // Dummy decompression until we get to offset
                 let limit = (self.offset - self.decomp_pos).min(self.out_buf.len() as u64) as usize;
                 OutBuffer::around(&mut self.out_buf[..limit])
             } else {
@@ -265,7 +261,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
             self.in_buf_pos += in_buffer.pos();
             self.read_compressed += in_buffer.pos() as u64;
 
-            // Only add to progress if we actually wrote something to buf
+            // Only add progress if we actually wrote something to buf
             if self.decomp_pos > self.offset {
                 self.offset += out_buffer.pos() as u64;
                 output_progress += out_buffer.pos();
@@ -291,8 +287,9 @@ impl<S: Seekable> Decoder<'_, S> {
 
     /// Resets the current decompresion status.
     ///
-    /// This resets the offset and limit. The next decompression after this function will start
-    /// from the beginning of the seekable source.
+    /// This resets the internal decompression context as well as decompression offset and limit.
+    /// The next decompression after this function will start from the beginning of the seekable
+    /// source.
     pub fn reset(&mut self) {
         self.reset_dctx();
         self.offset = 0;
@@ -306,7 +303,10 @@ impl<S: Seekable> Decoder<'_, S> {
             .expect("Resetting session never fails");
     }
 
-    /// Sets the index of the frame where decompression starts.
+    /// Sets the decompression offset to the beginning of the frame at `index`.
+    ///
+    /// This has the same effect as calling [`Self::set_offset`] with the decompressed start
+    /// position of the frame at `index`.
     ///
     /// # Errors
     ///
@@ -318,10 +318,11 @@ impl<S: Seekable> Decoder<'_, S> {
         Ok(offset)
     }
 
-    /// Sets the index of the last frame that is included in decompression.
+    /// Sets the limit for the decompression offset to the end of the frame at `index`.
     ///
-    /// This does not reset the current decompression state, it is possible to change the upper
-    /// frame in the middle of a decompression operation.
+    /// This has the same effect as calling [`Self::set_offset_limit`] with the decompressed end
+    /// position of the frame at `index`. The current decompression state will not be reset, it is
+    /// possible to change the upper frame in the middle of a decompression operation.
     ///
     /// # Errors
     ///
@@ -335,21 +336,18 @@ impl<S: Seekable> Decoder<'_, S> {
 
     /// Sets the decompression offset.
     ///
-    /// The offset is the position in the decompressed data of the seekable source from which
+    /// The offset is the position in the _decompressed_ data of the seekable source from which
     /// decompression starts. If possible, the decoder will continue decompression from the current
     /// internal state.
     ///
-    /// Notice that the decoder will perform a dummy decompression up to the offset position, if
-    /// the passed offset is not the beginning of a frame.
+    /// **Note**: If the passed offset is not the beginning of a frame, the decoder will perform a
+    /// dummy decompression from the beginning of the frame up to the offset position.
     ///
     /// # Errors
     ///
     /// When the passed offset is out of range.
     pub fn set_offset(&mut self, offset: u64) -> Result<()> {
-        if offset > self.seek_table().size_decomp() {
-            return Err(Error::offset_out_of_range());
-        }
-
+        Self::check_offset(offset, self.seek_table())?;
         let current_frame = self.seek_table().frame_index_decomp(self.offset);
         let target_frame = self.seek_table().frame_index_decomp(offset);
 
@@ -364,12 +362,14 @@ impl<S: Seekable> Decoder<'_, S> {
 
     /// Sets a limit for the decompression offset.
     ///
-    /// The limit is the position in the decompressed data of the seekable source at which
+    /// The limit is the position in the _decompressed_ data of the seekable source at which
     /// decompresion stops. This does not reset the current decompression state, the limit can be
     /// changed in the middle of a decompression operation without interrupting an ongoing
-    /// decompression operation.
+    /// decompression operation. It is possible to set a limit that is lower than the applied
+    /// offset. However, it will lead to any decompression operation making no progress, i.e.
+    /// it will produce zero decompressed bytes.
     ///
-    /// Notice that the decoder will immediately stop decompression at the specified limit. The
+    /// **Note**: The decoder will immediately stop decompression at the specified limit. The
     /// frame checksum of the last decompressed frame will not be verified, if the limit isn't at
     /// the end of a frame.
     ///
@@ -377,12 +377,18 @@ impl<S: Seekable> Decoder<'_, S> {
     ///
     /// When the passed limit is out of range.
     pub fn set_offset_limit(&mut self, limit: u64) -> Result<()> {
-        if limit > self.seek_table().size_decomp() {
-            return Err(Error::offset_out_of_range());
-        }
+        Self::check_offset(limit, self.seek_table())?;
         self.offset_limit = limit;
 
         Ok(())
+    }
+
+    fn check_offset(offset: u64, seek_table: &SeekTable) -> Result<()> {
+        if offset > seek_table.size_decomp() {
+            Err(Error::offset_out_of_range())
+        } else {
+            Ok(())
+        }
     }
 
     /// Gets the total number of compressed bytes read since the last reset.
@@ -484,13 +490,44 @@ mod tests {
         io::copy(decoder, &mut output).unwrap();
         output.set_position(0);
 
-        // Iterating makes it easier to see differences
+        // Iterating is verbose but makes it easier to see differences
         let mut num_line = start_line;
         for line in output.lines().map(|l| l.unwrap()) {
             assert_eq!(line, format!("Hello from line {num_line:06}"));
             num_line += 1;
         }
         assert_eq!(num_line, last_line);
+    }
+
+    #[test]
+    fn options() {
+        let (_, seekable) = input_and_seekable();
+        let st = SeekTable::from_seekable(&mut seekable.clone()).unwrap();
+
+        let oks = [
+            DecodeOptions::new(seekable.clone()),
+            DecodeOptions::new(seekable.clone()).lower_frame(st.num_frames() - 1),
+            DecodeOptions::new(seekable.clone()).upper_frame(st.num_frames() - 1),
+            DecodeOptions::new(seekable.clone()).offset(st.size_decomp()),
+            DecodeOptions::new(seekable.clone()).offset_limit(st.size_decomp()),
+            DecodeOptions::new(Cursor::new(vec![128, 0])).seek_table(st.clone()),
+        ];
+
+        let errs = [
+            DecodeOptions::new(Cursor::new(vec![128, 0])),
+            DecodeOptions::new(seekable.clone()).lower_frame(st.num_frames()),
+            DecodeOptions::new(seekable.clone()).upper_frame(st.num_frames()),
+            DecodeOptions::new(seekable.clone()).offset(st.size_decomp() + 1),
+            DecodeOptions::new(seekable.clone()).offset_limit(st.size_decomp() + 1),
+        ];
+
+        for opts in oks {
+            assert!(opts.into_decoder().is_ok());
+        }
+
+        for opts in errs {
+            assert!(opts.into_decoder().is_err());
+        }
     }
 
     #[test]

@@ -293,6 +293,20 @@ impl SeekTable {
     /// # Errors
     ///
     /// Returns an error if the seek table cannot be parsed or validation fails.
+    ///
+    /// # Examples
+    ///
+    /// Anything that implements [`std::io::Read`] and [`std::io::Seek`] can be used as
+    /// a [`Seekable`].
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seekable = File::open("seekable.zst")?;
+    /// let seek_table = SeekTable::from_seekable(&mut seekable)?;
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn from_seekable(src: &mut impl Seekable) -> Result<Self> {
         let footer = src.seek_table_footer()?;
         let mut parser = Parser::from_integrity(&footer)?;
@@ -338,6 +352,17 @@ impl SeekTable {
     ///
     /// Fails if the integrity field is neither present as header nor as footer, or if
     /// verification fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs;
+    /// use zeekstd::SeekTable;
+    ///
+    /// let seekable = fs::read("seekable.zst")?;
+    /// let seek_table = SeekTable::from_bytes(&seekable)?;
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn from_bytes(buf: &[u8]) -> Result<Self> {
         let mut offset = SKIPPABLE_HEADER_SIZE;
         let mut parser = if read_le32!(buf, SKIPPABLE_HEADER_SIZE + 5) == SEEKABLE_MAGIC_NUMBER {
@@ -365,6 +390,17 @@ impl SeekTable {
     /// # Errors
     ///
     /// Fails if the integrity field is not present as header, or if verification fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut reader = File::open("my/seek_table")?;
+    /// let seek_table = SeekTable::from_reader(&mut reader)?;
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn from_reader(reader: &mut impl Read) -> Result<Self> {
         let mut buf = [0u8; SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE];
         reader.read_exact(&mut buf)?;
@@ -396,7 +432,7 @@ impl SeekTable {
     ///
     /// # Errors
     ///
-    /// Fails if `num_frames()` reaches `SEEKABLE_MAX_FRAMES`.
+    /// Fails if [`Self::num_frames()`] reaches [`SEEKABLE_MAX_FRAMES`].
     pub fn log_frame(&mut self, c_size: u32, d_size: u32) -> Result<()> {
         if self.num_frames() >= SEEKABLE_MAX_FRAMES {
             return Err(Error::frame_index_too_large());
