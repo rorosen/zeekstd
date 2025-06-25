@@ -1,5 +1,5 @@
 {
-  description = "CLI tool for the Zstandard Seekable Format";
+  description = "Rust implementation of the Zstandard Seekable Format";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";

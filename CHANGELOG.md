@@ -9,5 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Implement decompression between byte positions
+- Implement decompression from an arbitrary byte offset up to an offset limit
+  - `offset` and `offset_limit` can be set on `DecodeOptions` and `Decoder`
+  - All values are decompressed offsets
+  - If `offset` is not the beginning of a frame, the decoder will decompress everything from the
+    last frame start up to `offset` to an internal buffer
+  - The decoder will stop decompression when reaching `offset_limit`. The checksum of the last frame
+    will not be verified, except `offset_limit` is exactly the end of a frame
+  - Only bytes in the requested range are returned from `read` and `decompress` calls
+  - `Decoder::set_lower_frame` and `Decoder::set_upper_frame` return a `Result` now
 - Implement `std::io::Seek` for `Decoder`
