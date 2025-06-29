@@ -14,7 +14,7 @@ pub struct Decompressor<'a> {
 impl Decompressor<'_> {
     pub fn new(args: &DecompressArgs, prefix_len: Option<u64>) -> Result<Self> {
         let mut src = File::open(&args.input_file).context("Failed to open input file")?;
-        let seek_table = match &args.shared.seek_table_file {
+        let seek_table = match &args.common.seek_table_file {
             Some(path) => {
                 let mut file = File::open(path).context("Failed to open seek table file")?;
                 SeekTable::from_reader(&mut file)
@@ -23,11 +23,13 @@ impl Decompressor<'_> {
         }
         .context("Failed to parse seek table")?;
 
-        let upper_frame = if args.to > seek_table.num_frames() {
-            seek_table.num_frames() - 1
-        } else {
-            args.to
-        };
+        let offset = args
+            .offset(&seek_table)
+            .context("Failed to get decompression offset")?;
+
+        let offset_limit = args
+            .offset_limit(&seek_table)
+            .context("Failed to get decompression offset limit")?;
 
         let mut dctx = DCtx::try_create().context("Failed to create decompression context")?;
         if let Some(len) = prefix_len {
@@ -42,8 +44,8 @@ impl Decompressor<'_> {
 
         let decoder = DecodeOptions::with_dctx(src, dctx)
             .seek_table(seek_table)
-            .lower_frame(args.from)
-            .upper_frame(upper_frame)
+            .offset(offset)
+            .offset_limit(offset_limit)
             .into_decoder()
             .context("Failed to create decoder")?;
 
