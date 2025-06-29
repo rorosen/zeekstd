@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, str::FromStr};
 use anyhow::{Context, bail};
 use clap::{Parser, ValueEnum};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use zeekstd::CompressionLevel;
+use zeekstd::{CompressionLevel, SeekTable};
 
 // 128 MiB
 const MMAP_THRESHOLD: u64 = 0x0010_0000;
@@ -41,6 +41,33 @@ impl FromStr for ByteValue {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum ByteOffset {
+    Start,
+    End,
+    Value(u64),
+}
+
+impl From<ByteValue> for ByteOffset {
+    fn from(value: ByteValue) -> Self {
+        Self::Value(value.0 as u64)
+    }
+}
+
+impl FromStr for ByteOffset {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
+        let this = match s.to_lowercase().as_str() {
+            "start" => Self::Start,
+            "end" => Self::End,
+            _ => Self::from(ByteValue::from_str(s)?),
+        };
+
+        Ok(this)
+    }
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct CliFlags {
     /// Suppress output.
@@ -65,7 +92,7 @@ impl CliFlags {
 }
 
 #[derive(Debug, Parser, Clone)]
-pub struct SharedArgs {
+pub struct CommonArgs {
     /// Disable output checks.
     #[arg(short, long, action, global = true)]
     pub force: bool,
@@ -91,7 +118,7 @@ pub struct SharedArgs {
     pub seek_table_file: Option<PathBuf>,
 }
 
-impl SharedArgs {
+impl CommonArgs {
     pub fn use_mmap(&self, prefix_len: Option<u64>) -> bool {
         if self.mmap_prefix {
             return true;
@@ -114,7 +141,7 @@ pub enum FrameSizePolicy {
 #[derive(Debug, Parser, Clone)]
 pub struct CompressArgs {
     #[clap(flatten)]
-    pub shared: SharedArgs,
+    pub common: CommonArgs,
 
     /// Desired compression level between 1 and 19. Lower numbers provide faster compression,
     /// higher numbers yield better compression ratios.
@@ -163,15 +190,25 @@ impl CompressArgs {
 #[derive(Debug, Parser, Clone)]
 pub struct DecompressArgs {
     #[clap(flatten)]
-    pub shared: SharedArgs,
+    pub common: CommonArgs,
+
+    /// The offset (of the uncompressed data) where decompression starts. Accepts the special
+    /// values 'start' and 'end'.
+    #[arg(long, group = "start", default_value = "start")]
+    pub from: ByteOffset,
 
     /// The frame number at which decompression starts.
-    #[arg(long, group = "start", default_value_t = 0)]
-    pub from: u32,
+    #[arg(long, group = "start")]
+    pub from_frame: Option<u32>,
 
-    /// The frame number at which decompression ends (inclusive). Accepts special value 'end'.
-    #[arg(long, group = "end", value_parser = parse_end_frame, default_value = "end")]
-    pub to: u32,
+    /// The offset (of the decompressed data) where decompression ends. Accepts the special
+    /// values 'start' and 'end'.
+    #[arg(long, group = "end", default_value = "end")]
+    pub to: ByteOffset,
+
+    /// The frame number at which decompression ends (inclusive).
+    #[arg(long, group = "end")]
+    pub to_frame: Option<u32>,
 
     /// Provide a reference point for Zstandard's diff engine.
     #[arg(long)]
@@ -185,6 +222,36 @@ pub struct DecompressArgs {
     pub output_file: Option<PathBuf>,
 }
 
+impl DecompressArgs {
+    pub fn offset(&self, seek_table: &SeekTable) -> anyhow::Result<u64> {
+        let offset = if let Some(index) = self.from_frame {
+            seek_table.frame_start_decomp(index)?
+        } else {
+            match self.from {
+                ByteOffset::Start => 0,
+                ByteOffset::End => seek_table.size_decomp(),
+                ByteOffset::Value(val) => val,
+            }
+        };
+
+        Ok(offset)
+    }
+
+    pub fn offset_limit(&self, seek_table: &SeekTable) -> anyhow::Result<u64> {
+        let limit = if let Some(index) = self.to_frame {
+            seek_table.frame_end_decomp(index)?
+        } else {
+            match self.to {
+                ByteOffset::Start => 0,
+                ByteOffset::End => seek_table.size_decomp(),
+                ByteOffset::Value(val) => val,
+            }
+        };
+
+        Ok(limit)
+    }
+}
+
 #[derive(Debug, ValueEnum, Clone)]
 pub enum SeekTableFormat {
     Head,
@@ -194,12 +261,12 @@ pub enum SeekTableFormat {
 #[derive(Debug, Parser)]
 pub struct ListArgs {
     /// The frame number at which listing starts.
-    #[arg(long)]
-    pub from: Option<u32>,
+    #[arg(long, visible_alias = "from")]
+    pub from_frame: Option<u32>,
 
     /// The frame number at which listing ends (inclusive). Accepts special value 'end'.
-    #[arg(long, value_parser = parse_end_frame)]
-    pub to: Option<u32>,
+    #[arg(long, visible_alias = "to", value_parser = parse_end_frame)]
+    pub to_frame: Option<u32>,
 
     /// The number of frames that should be listed.
     #[arg(long, group = "end")]

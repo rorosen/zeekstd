@@ -103,8 +103,8 @@ impl Command {
         });
 
         let is_stdout = match self {
-            Self::Compress(CompressArgs { shared, .. })
-            | Self::Decompress(DecompressArgs { shared, .. }) => shared.stdout,
+            Self::Compress(CompressArgs { common, .. })
+            | Self::Decompress(DecompressArgs { common, .. }) => common.stdout,
             Self::List(_) => false,
         };
         if is_stdout {
@@ -123,8 +123,8 @@ impl Command {
 
     fn force_write_stdout(&self) -> bool {
         match self {
-            Self::Compress(CompressArgs { shared, .. })
-            | Self::Decompress(DecompressArgs { shared, .. }) => shared.force,
+            Self::Compress(CompressArgs { common, .. })
+            | Self::Decompress(DecompressArgs { common, .. }) => common.force,
             // Always write to stdout in list mode
             Self::List(_) => true,
         }
@@ -170,7 +170,7 @@ impl Command {
                     .as_ref()
                     .and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
                 let seek_table_file = args
-                    .shared
+                    .common
                     .seek_table_file
                     .as_ref()
                     .map(|p| {
@@ -184,7 +184,7 @@ impl Command {
                     reader,
                     compressor,
                     prefix: args.patch_from,
-                    mmap_prefix: args.shared.use_mmap(prefix_len),
+                    mmap_prefix: args.common.use_mmap(prefix_len),
                     out_path: out_path
                         .and_then(|p| p.to_str().map(Into::into))
                         .unwrap_or("STDOUT".into()),
@@ -209,7 +209,7 @@ impl Command {
                     decompressor,
                     writer,
                     prefix: args.patch_apply,
-                    mmap_prefix: args.shared.use_mmap(prefix_len),
+                    mmap_prefix: args.common.use_mmap(prefix_len),
                     bar: flags.progress_bar(in_path.as_deref()),
                 };
 
@@ -227,15 +227,15 @@ impl Command {
                 }
                 .context("Failed to read seek table")?;
 
-                let end_frame = if args.to.is_some_and(|to| to > seek_table.num_frames()) {
+                let end_frame = if args.to_frame.is_some_and(|i| i > seek_table.num_frames()) {
                     Some(seek_table.num_frames() - 1)
                 } else {
-                    args.to
+                    args.to_frame
                 };
 
                 let mode = ExecMode::List {
                     seek_table,
-                    start_frame: args.from,
+                    start_frame: args.from_frame,
                     end_frame,
                     detail: args.detail,
                 };
@@ -415,8 +415,7 @@ fn list_frames(
     if start > end {
         bail!("Start frame ({start}) cannot be greater than end frame ({end})");
     }
-    // line length (106) times lines
-    let mut buf = String::with_capacity(106 * 100);
+    let mut buf = String::new();
 
     println!(
         "{: <15} {: <15} {: <15} {: <20} {: <20}",

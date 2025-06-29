@@ -19,3 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - Only bytes in the requested range are returned from `read` and `decompress` calls
   - `Decoder::set_lower_frame` and `Decoder::set_upper_frame` return a `Result` now
 - Implement `std::io::Seek` for `Decoder`
+- CLI: Add options for decompression from an arbitrary byte offset up to an offset limit
+  - `--from` now expects a byte offset, not a frame index
+  - `--from-frame` takes a frame index
+  - `--to` now expects an offset limit, not a frame index
+  - `--to-frame` takes a frame index
