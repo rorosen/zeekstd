@@ -15,6 +15,7 @@ rustPlatform.buildRustPackage {
     ".toml"
     ".lock"
     ".md"
+    ".txt"
   ];
 
   cargoLock.lockFile = ./Cargo.lock;
