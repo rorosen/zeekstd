@@ -42,26 +42,43 @@ impl FromStr for ByteValue {
 }
 
 #[derive(Debug, Clone)]
-pub enum ByteOffset {
-    Start,
+pub enum OffsetLimit {
     End,
     Value(u64),
 }
 
-impl From<ByteValue> for ByteOffset {
+impl From<ByteValue> for OffsetLimit {
     fn from(value: ByteValue) -> Self {
         Self::Value(value.0 as u64)
     }
 }
 
-impl FromStr for ByteOffset {
+impl FromStr for OffsetLimit {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
         let this = match s.to_lowercase().as_str() {
-            "start" => Self::Start,
             "end" => Self::End,
             _ => Self::from(ByteValue::from_str(s)?),
+        };
+
+        Ok(this)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum LastFrame {
+    End,
+    Index(u32),
+}
+
+impl FromStr for LastFrame {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let this = match s.to_lowercase().as_str() {
+            "end" => Self::End,
+            _ => Self::Index(u32::from_str(s)?),
         };
 
         Ok(this)
@@ -192,23 +209,25 @@ pub struct DecompressArgs {
     #[clap(flatten)]
     pub common: CommonArgs,
 
-    /// The offset (of the uncompressed data) where decompression starts. Accepts the special
-    /// values 'start' and 'end'.
-    #[arg(long, group = "start", default_value = "start")]
-    pub from: ByteOffset,
+    /// The offset (of the uncompressed data) where decompression starts.
+    #[arg(long, group = "start", default_value_t = 0)]
+    pub from: u64,
 
     /// The frame number at which decompression starts.
     #[arg(long, group = "start")]
     pub from_frame: Option<u32>,
 
-    /// The offset (of the decompressed data) where decompression ends. Accepts the special
-    /// values 'start' and 'end'.
+    /// The offset (of the decompressed data) where decompression ends.
+    ///
+    /// Accepts the special value 'end'.
     #[arg(long, group = "end", default_value = "end")]
-    pub to: ByteOffset,
+    pub to: OffsetLimit,
 
     /// The frame number at which decompression ends (inclusive).
+    ///
+    /// Accepts special value 'last'.
     #[arg(long, group = "end")]
-    pub to_frame: Option<u32>,
+    pub to_frame: Option<LastFrame>,
 
     /// Provide a reference point for Zstandard's diff engine.
     #[arg(long)]
@@ -227,24 +246,22 @@ impl DecompressArgs {
         let offset = if let Some(index) = self.from_frame {
             seek_table.frame_start_decomp(index)?
         } else {
-            match self.from {
-                ByteOffset::Start => 0,
-                ByteOffset::End => seek_table.size_decomp(),
-                ByteOffset::Value(val) => val,
-            }
+            self.from
         };
 
         Ok(offset)
     }
 
     pub fn offset_limit(&self, seek_table: &SeekTable) -> anyhow::Result<u64> {
-        let limit = if let Some(index) = self.to_frame {
-            seek_table.frame_end_decomp(index)?
+        let limit = if let Some(end) = &self.to_frame {
+            match end {
+                LastFrame::End => seek_table.size_decomp(),
+                LastFrame::Index(i) => seek_table.frame_end_decomp(*i)?,
+            }
         } else {
             match self.to {
-                ByteOffset::Start => 0,
-                ByteOffset::End => seek_table.size_decomp(),
-                ByteOffset::Value(val) => val,
+                OffsetLimit::End => seek_table.size_decomp(),
+                OffsetLimit::Value(val) => val,
             }
         };
 
@@ -261,19 +278,20 @@ pub enum SeekTableFormat {
 #[derive(Debug, Parser)]
 pub struct ListArgs {
     /// The frame number at which listing starts.
-    #[arg(long, visible_alias = "from")]
+    #[arg(long)]
     pub from_frame: Option<u32>,
 
-    /// The frame number at which listing ends (inclusive). Accepts special value 'end'.
-    #[arg(long, visible_alias = "to", value_parser = parse_end_frame)]
-    pub to_frame: Option<u32>,
+    /// The frame number at which listing ends (inclusive).
+    ///
+    /// Accepts special value 'last'.
+    #[arg(long, group = "end")]
+    pub to_frame: Option<LastFrame>,
 
-    /// The number of frames that should be listed.
+    /// The number of frames to list.
     #[arg(long, group = "end")]
     pub num_frames: Option<u32>,
 
-    /// Detailed listing of individual frames, automatically implied when frame boundaries are
-    /// specified.
+    /// Detailed listing of individual frames, implied when frame boundaries are specified.
     #[arg(short, long, action)]
     pub detail: bool,
 
@@ -283,15 +301,6 @@ pub struct ListArgs {
 
     /// Input file.
     pub input_file: String,
-}
-
-fn parse_end_frame(arg: &str) -> anyhow::Result<u32> {
-    let this = match arg.to_lowercase().as_str() {
-        "end" => u32::MAX,
-        val => val.parse()?,
-    };
-
-    Ok(this)
 }
 
 #[cfg(test)]
@@ -371,10 +380,8 @@ mod tests {
     #[test]
     fn decompress_end_frame() {
         for input in ["end", "End", "eND", "END"] {
-            let result = parse_end_frame(input);
-            assert!(result.is_ok());
-            let parsed_value = result.unwrap();
-            assert_eq!(parsed_value, u32::MAX);
+            let value = LastFrame::from_str(input).unwrap();
+            assert!(matches!(value, LastFrame::End));
         }
     }
 }
