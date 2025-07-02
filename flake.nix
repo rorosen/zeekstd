@@ -52,7 +52,7 @@
                 checkPhase = "cargo fmt --check";
               }
             );
-          } // (import ./tests { pkgs = pkgs.extend (_: _: { inherit (config.packages) zeekstd; }); });
+          };
 
           devShells.default = pkgs.mkShell {
             packages = [ pkgs.cargo-edit ];
