@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0-lib]
+
 ### Added
 
 - Implement decompression from an arbitrary byte offset up to an offset limit
@@ -18,11 +20,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     will not be verified, except `offset_limit` is exactly the end of a frame
   - Only bytes in the requested range are returned from `read` and `decompress` calls
 - Implement `std::io::Seek` for `Decoder`
-- CLI: Add options for decompression from an arbitrary byte offset up to an offset limit
 
 ### Changed
 
 - `Decoder::set_lower_frame` and `Decoder::set_upper_frame` return a `Result` now
-- CLI
-  - `--from` now expects a byte offset, not a frame index
-  - `--to` now expects an offset limit, not a frame index
+
+## [0.4.0-lib]
+
+### Added
+
+- Add options for decompression from an arbitrary byte offset up to an offset limit
+
+### Changed
+
+- Argument `--from` of the `decompress` command now expects a byte offset, not a frame index
+- Argument `--to` of the `decompress` command now expects an offset limit, not a frame index
