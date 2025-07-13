@@ -501,7 +501,7 @@ impl<W: std::io::Write> Encoder<'_, W> {
     ///
     /// # Errors
     ///
-    /// Fails if the frame epilogue cannot be created or the frame limit is reached.
+    /// Fails if the frame epilogue cannot be written or the frame limit is reached.
     pub fn end_frame(&mut self) -> Result<usize> {
         let mut progress = 0;
 

@@ -275,7 +275,7 @@ impl Default for SeekTable {
 }
 
 impl SeekTable {
-    // Create a new, empty seek table.
+    /// Create a new, empty seek table.
     pub fn new() -> Self {
         let entries = Entries(vec![Entry {
             c_offset: 0,
@@ -591,7 +591,7 @@ impl SeekTable {
             .d_offset
     }
 
-    /// Convert this seek table in an immutable, serializable form.
+    /// Convert this seek table into an immutable, serializable form.
     ///
     /// The seek table will be serialized with the seekable integrity field placed as a
     /// footer after any frame data. This is the typical seek table that can be appended to a
@@ -600,7 +600,7 @@ impl SeekTable {
         self.into_format_serializer(Format::Foot)
     }
 
-    /// Convert this seek table in an immutable, serializable form.
+    /// Convert this seek table into an immutable, serializable form.
     ///
     /// The seek table will be serialized with the seekable integrity field placed as a
     /// header before any frame data. This is useful for creating a stand-alone seek table that
@@ -664,8 +664,8 @@ pub struct Serializer {
 impl Serializer {
     /// Write the seek table into `buf`.
     ///
-    /// Returns the number of written. Call this repetitively until `0` is returned to serialize
-    /// the entire seek table.
+    /// Returns the number of bytes written. Call this repetitively until `0` is returned to
+    /// serialize the entire seek table.
     pub fn write_into(&mut self, buf: &mut [u8]) -> usize {
         let mut buf_pos = 0;
 

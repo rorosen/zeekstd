@@ -145,7 +145,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
     ///
     /// # Errors
     ///
-    /// Fails if the decoder could not created.
+    /// Fails if the decoder could not be created.
     pub fn new(src: S) -> Result<Self> {
         Self::with_opts(DecodeOptions::new(src))
     }
