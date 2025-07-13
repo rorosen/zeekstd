@@ -88,9 +88,13 @@ pub struct ReadmeDoctests;
 
 #[cfg(test)]
 mod tests {
-    use std::io::{self, BufRead, Cursor, Write};
+    use std::{
+        fs,
+        io::{self, Cursor, Write},
+        path::PathBuf,
+    };
 
-    use zstd_safe::{CCtx, CParameter, DCtx};
+    use zstd_safe::DCtx;
 
     use crate::seek_table::Format;
 
@@ -99,126 +103,84 @@ mod tests {
     pub const LINE_LEN: u32 = 23;
     pub const LINES_IN_DOC: u32 = 200_384;
 
-    fn highbit_64(mut v: usize) -> u32 {
-        assert!((v > 0), "Cannot get highest bit position of zero");
-
-        let mut count = 0;
-        v >>= 1;
-        while v > 0 {
-            v >>= 1;
-            count += 1;
-        }
-
-        count
-    }
-
-    pub fn generate_input(num_lines: u32) -> Cursor<Vec<u8>> {
-        let mut input = Cursor::new(Vec::with_capacity((LINE_LEN * num_lines) as usize));
-        for i in 0..num_lines {
-            writeln!(&mut input, "Hello from line {i:06}").unwrap();
-        }
-
-        input.set_position(0);
-        input
+    pub fn test_input() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/kaestner.txt")
     }
 
     #[test]
-    fn cycle() -> Result<()> {
-        let mut input = generate_input(LINES_IN_DOC);
+    fn cycle() {
+        let input = fs::read(test_input()).unwrap();
         let mut seekable = Cursor::new(vec![]);
-        let mut encoder = Encoder::new(&mut seekable)?;
+        let mut encoder = Encoder::new(&mut seekable).unwrap();
 
-        // Compress the input
-        io::copy(&mut input, &mut encoder)?;
-        let n = encoder.finish()?;
+        // Compress the input in multiple steps
+        encoder.compress(&input[..input.len() / 2]).unwrap();
+        encoder.compress(&input[input.len() / 2..]).unwrap();
+
+        let n = encoder.finish().unwrap();
         assert_eq!(n, seekable.position());
 
-        let mut decoder = DecodeOptions::new(seekable).into_decoder()?;
+        let mut decoder = DecodeOptions::new(seekable).into_decoder().unwrap();
         let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
         // Decompress the complete seekable
-        io::copy(&mut decoder, &mut output)?;
-        output.set_position(0);
+        io::copy(&mut decoder, &mut output).unwrap();
 
-        let mut num_line = 0;
-        for line in output.clone().lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {num_line:06}"));
-            num_line += 1;
-        }
-        assert_eq!(num_line, LINES_IN_DOC);
-        assert_eq!(input.get_ref(), output.get_ref());
-
-        Ok(())
+        assert_eq!(&input, output.get_ref());
     }
 
     #[test]
-    fn patch_cycle() -> Result<()> {
-        let old = generate_input(LINES_IN_DOC - 1);
-        let new = generate_input(LINES_IN_DOC);
+    fn patch_cycle() {
+        let old = fs::read(test_input()).unwrap();
+        let mut new = fs::read(test_input()).unwrap();
+        new.extend_from_slice(b"The End");
         let mut patch = Cursor::new(vec![]);
 
-        let window_log = highbit_64(old.get_ref().len() + 1024);
-        let mut cctx = CCtx::create();
-        cctx.set_parameter(CParameter::WindowLog(window_log))?;
-        cctx.set_parameter(CParameter::EnableLongDistanceMatching(true))?;
-        let mut encoder = EncodeOptions::new()
-            .cctx(cctx)
-            .into_encoder(&mut patch)
-            .unwrap();
-
-        // Create a binary diff
+        let mut encoder = Encoder::new(&mut patch).unwrap();
+        // Create a binary patch
         let mut input_progress = 0;
         loop {
             let n = encoder
-                .compress_with_prefix(&new.get_ref()[input_progress..], Some(old.get_ref()))
+                .compress_with_prefix(&new[input_progress..], Some(&old))
                 .unwrap();
             if n == 0 {
                 break;
             }
             input_progress += n;
         }
-        let n = encoder.finish()?;
+        let n = encoder.finish().unwrap();
         assert_eq!(n, patch.position());
 
         let mut decoder = Decoder::new(patch).unwrap();
-        let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
+        let mut output = vec![];
         let mut buf = vec![0; DCtx::out_size()];
         let mut buf_pos = 0;
 
-        // Apply a binary diff
+        // Apply the binary patch
         loop {
             let n = decoder
-                .decompress_with_prefix(&mut buf[buf_pos..], Some(old.get_ref()))
+                .decompress_with_prefix(&mut buf[buf_pos..], Some(&old))
                 .unwrap();
             if n == 0 {
                 break;
             }
             buf_pos += n;
             if buf_pos == buf.len() {
-                output.write_all(&buf).unwrap();
+                output.extend_from_slice(&buf);
                 buf_pos = 0;
             }
         }
-        output.write_all(&buf[..buf_pos]).unwrap();
 
-        output.set_position(0);
-        let mut num_line = 0;
-        for line in output.clone().lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {num_line:06}"));
-            num_line += 1;
-        }
-        assert_eq!(num_line, LINES_IN_DOC);
-        assert_eq!(new.get_ref(), output.get_ref());
-
-        Ok(())
+        output.extend_from_slice(&buf[..buf_pos]);
+        assert_eq!(new, output);
     }
 
     #[test]
     fn cycle_with_stand_alone_seek_table() {
-        let mut input = generate_input(LINES_IN_DOC);
+        let input = fs::read(test_input()).unwrap();
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = Encoder::new(&mut seekable).unwrap();
 
-        io::copy(&mut input, &mut encoder).unwrap();
+        encoder.compress(&input).unwrap();
         encoder.end_frame().unwrap();
         encoder.flush().unwrap();
 
@@ -237,9 +199,10 @@ mod tests {
             .seek_table(seek_table)
             .into_decoder()
             .unwrap();
-        let mut output = Cursor::new(vec![]);
-        io::copy(&mut decoder, &mut output).unwrap();
 
-        assert_eq!(input, output);
+        let mut output = vec![0; input.len()];
+        decoder.decompress(&mut output).unwrap();
+
+        assert_eq!(&input, &output);
     }
 }

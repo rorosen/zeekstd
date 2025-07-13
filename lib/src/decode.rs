@@ -456,52 +456,35 @@ impl<S: Seekable> std::io::Seek for Decoder<'_, S> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom};
-
-    use crate::{
-        EncodeOptions, FrameSizePolicy,
-        tests::{LINE_LEN, LINES_IN_DOC, generate_input},
+    use std::{
+        fs,
+        io::{Cursor, Read, Seek, SeekFrom},
     };
+
+    use crate::{EncodeOptions, FrameSizePolicy, tests::test_input};
 
     use super::*;
 
-    const LINES_IN_FRAME: u32 = 1143;
-    // Add one for the last frame
-    const NUM_FRAMES: u32 = LINES_IN_DOC / LINES_IN_FRAME + 1;
-
-    fn input_and_seekable() -> (Cursor<Vec<u8>>, Cursor<Vec<u8>>) {
-        let mut input = generate_input(LINES_IN_DOC);
+    fn new_seekable(input: &[u8], frame_size_policy: Option<FrameSizePolicy>) -> Cursor<Vec<u8>> {
         let mut seekable = Cursor::new(vec![]);
         let mut encoder = EncodeOptions::new()
-            .frame_size_policy(FrameSizePolicy::Uncompressed(LINE_LEN * LINES_IN_FRAME))
+            .frame_size_policy(frame_size_policy.unwrap_or_default())
             .into_encoder(&mut seekable)
             .unwrap();
 
         // Compress the input
-        io::copy(&mut input, &mut encoder).unwrap();
+        let n = encoder.compress(input).unwrap();
+        assert_eq!(n, input.len());
         let n = encoder.finish().unwrap();
         assert_eq!(n, seekable.position());
 
-        (input, seekable)
-    }
-
-    fn verify_decomp<S: Seekable>(decoder: &mut Decoder<'_, S>, start_line: u32, last_line: u32) {
-        let mut output = Cursor::new(vec![]);
-        io::copy(decoder, &mut output).unwrap();
-        output.set_position(0);
-
-        // Iterating is verbose but makes it easier to see differences
-        let mut num_line = start_line;
-        for line in output.lines().map(|l| l.unwrap()) {
-            assert_eq!(line, format!("Hello from line {num_line:06}"));
-            num_line += 1;
-        }
-        assert_eq!(num_line, last_line);
+        seekable
     }
 
     #[test]
     fn options() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let seekable = new_seekable(&input, None);
         let st = SeekTable::from_seekable(&mut seekable.clone()).unwrap();
 
         let oks = [
@@ -532,107 +515,149 @@ mod tests {
 
     #[test]
     fn decompress_and_reset() {
-        let (input, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let seekable = new_seekable(&input, None);
         let mut decoder = Decoder::new(seekable).unwrap();
 
-        assert_eq!(NUM_FRAMES, decoder.seek_table().num_frames());
+        let mut output = vec![0; input.len()];
+        let n = decoder.decompress(&mut output).unwrap();
 
-        verify_decomp(&mut decoder, 0, LINES_IN_DOC);
+        assert_eq!(n, output.len());
+        assert_eq!(input, output);
 
-        let mut output = Cursor::new(vec![]);
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, 0);
+
         decoder.reset();
-        io::copy(&mut decoder, &mut output).unwrap();
-        assert_eq!(input.get_ref(), output.get_ref());
+        let n = decoder.decompress(&mut output).unwrap();
+
+        assert_eq!(n, output.len());
+        assert_eq!(input, output);
     }
 
     #[test]
     fn decompress_until_upper_frame() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let frame_size = input.len() / 7;
+        let seekable = new_seekable(
+            &input,
+            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
+        );
         let mut decoder = Decoder::new(seekable).unwrap();
 
-        // Decompress until frame 6 (inclusive)
+        // Decompress until frame 5 (inclusive)
         decoder.set_lower_frame(0).unwrap();
-        decoder.set_upper_frame(6).unwrap();
+        decoder.set_upper_frame(5).unwrap();
 
-        verify_decomp(&mut decoder, 0, 7 * LINES_IN_FRAME);
+        let len = frame_size * 6;
+        let mut output = vec![0; len];
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, len);
+        assert_eq!(&input[..n], &output);
     }
 
     #[test]
     fn decompress_last_frames() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let frame_size = input.len() / 9;
+        let seekable = new_seekable(
+            &input,
+            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
+        );
         let mut decoder = Decoder::new(seekable).unwrap();
 
-        // Decompress the last 13 frames
-        decoder.set_lower_frame(NUM_FRAMES - 14).unwrap();
-        decoder.set_upper_frame(NUM_FRAMES - 1).unwrap();
+        // Decompress the last 4 frames
+        decoder.set_lower_frame(5).unwrap();
+        decoder.set_upper_frame(9).unwrap();
 
-        verify_decomp(
-            &mut decoder,
-            (NUM_FRAMES - 14) * LINES_IN_FRAME,
-            LINES_IN_DOC,
-        );
+        let len = input.len() - frame_size * 5;
+        let mut output = vec![0; len];
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, len);
+        assert_eq!(&input[input.len() - n..], &output);
     }
 
     #[test]
     fn upper_frame_greater_than_lower_frame() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let frame_size = input.len() / 13;
+        let seekable = new_seekable(
+            &input,
+            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
+        );
         let mut decoder = Decoder::new(seekable).unwrap();
 
         // Lower frame greater than upper frame, expect zero bytes read
         decoder.set_lower_frame(9).unwrap();
         decoder.set_upper_frame(8).unwrap();
-        let mut output = Cursor::new(vec![]);
-        let n = io::copy(&mut decoder, &mut output).unwrap();
+        let mut output = vec![0; input.len()];
+        let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(0, n);
-        output.set_position(0);
-        assert_eq!(0, output.lines().collect::<Vec<_>>().len());
     }
 
     #[test]
     fn reset_decompression() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let seekable = new_seekable(&input, None);
         let mut decoder = Decoder::new(seekable).unwrap();
 
         // Dummy decompression so we can reset something
-        decoder.decompress(&mut [0; 1024]).unwrap();
+        decoder.decompress(&mut [0; 128]).unwrap();
         decoder.reset();
-        verify_decomp(&mut decoder, 0, LINES_IN_DOC);
+        let mut output = vec![0; input.len()];
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, input.len());
+        assert_eq!(input, output);
     }
 
     #[test]
     fn decompress_everything_after_partly_decompression() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let frame_size = input.len() / 32;
+        let seekable = new_seekable(
+            &input,
+            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
+        );
         let mut decoder = Decoder::new(seekable).unwrap();
 
-        decoder.set_lower_frame(44).unwrap();
-        decoder.set_upper_frame(88).unwrap();
+        decoder.set_lower_frame(23).unwrap();
+        decoder.set_upper_frame(29).unwrap();
 
-        verify_decomp(&mut decoder, 44 * LINES_IN_FRAME, 89 * LINES_IN_FRAME);
+        let mut output = vec![0; input.len()];
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, frame_size * 30 - frame_size * 23);
+        assert_eq!(input[frame_size * 23..frame_size * 30], output[..n]);
 
         // Decompress all frames
         decoder.set_lower_frame(0).unwrap();
-        decoder.set_upper_frame(NUM_FRAMES - 1).unwrap();
-        verify_decomp(&mut decoder, 0, LINES_IN_DOC);
+        decoder
+            .set_upper_frame(decoder.seek_table().num_frames() - 1)
+            .unwrap();
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, input.len());
+        assert_eq!(input, output);
     }
 
     #[test]
     fn set_frame_boundaries() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let seekable = new_seekable(&input, None);
         let mut decoder = Decoder::new(seekable).unwrap();
+        let num_frames = decoder.seek_table().num_frames();
 
-        assert!(decoder.set_lower_frame(NUM_FRAMES - 1).is_ok());
-        assert!(decoder.set_upper_frame(NUM_FRAMES - 1).is_ok());
+        assert!(decoder.set_lower_frame(num_frames - 1).is_ok());
+        assert!(decoder.set_upper_frame(num_frames - 1).is_ok());
 
         // Frame index out of range
         assert!(
             decoder
-                .set_lower_frame(NUM_FRAMES)
+                .set_lower_frame(num_frames)
                 .unwrap_err()
                 .is_frame_index_too_large()
         );
         assert!(
             decoder
-                .set_upper_frame(NUM_FRAMES)
+                .set_upper_frame(num_frames)
                 .unwrap_err()
                 .is_frame_index_too_large()
         );
@@ -640,7 +665,8 @@ mod tests {
 
     #[test]
     fn set_offset_boundaries() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let seekable = new_seekable(&input, None);
         let mut decoder = Decoder::new(seekable).unwrap();
 
         let mut offset = decoder.seek_table().size_decomp();
@@ -664,90 +690,120 @@ mod tests {
 
     #[test]
     fn decompress_within_offset_boundaries() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let frame_size = input.len() / 34;
+        let seekable = new_seekable(
+            &input,
+            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
+        );
         let mut decoder = Decoder::new(seekable).unwrap();
 
-        decoder.set_offset(43 * LINE_LEN as u64).unwrap();
-        decoder.set_offset_limit(200_001 * LINE_LEN as u64).unwrap();
-        verify_decomp(&mut decoder, 43, 200_001);
+        let offset = input.len() / 3;
+        let offset_limit = 2 * offset;
+        decoder.set_offset(offset as u64).unwrap();
+        decoder.set_offset_limit(offset_limit as u64).unwrap();
+
+        let mut output = vec![0; input.len()];
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, offset_limit - offset);
+        assert_eq!(input[offset..offset_limit], output[..n]);
 
         // Limit stays unchanged
-        decoder.set_offset(44 * LINE_LEN as u64).unwrap();
-        verify_decomp(&mut decoder, 44, 200_001);
+        decoder.set_offset(3).unwrap();
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, offset_limit - 3);
+        assert_eq!(input[3..offset_limit], output[..n]);
 
         // Reset unsets offset and limit
         decoder.reset();
         assert_eq!(decoder.offset(), 0);
         assert_eq!(decoder.offset_limit(), decoder.seek_table().size_decomp());
         assert_eq!(decoder.read_compressed(), 0);
-        verify_decomp(&mut decoder, 0, LINES_IN_DOC);
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, input.len());
+        assert_eq!(input, output);
     }
 
     #[test]
+    #[allow(clippy::cast_sign_loss)]
     fn seek_decoder() {
-        let (_, seekable) = input_and_seekable();
+        let input = fs::read(test_input()).unwrap();
+        let frame_size = input.len() / 52;
+        let seekable = new_seekable(
+            &input,
+            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
+        );
         let mut decoder = Decoder::new(seekable).unwrap();
 
-        // Make sure that the offset limit isn't changed by seeking
-        decoder
-            .set_offset_limit(((LINES_IN_DOC - 1) * LINE_LEN).into())
-            .unwrap();
+        // Set the offset limit to make sure it isn't changed by seeking
+        let seek_pos = frame_size * 13;
+        let end = frame_size * 51;
+        decoder.set_offset_limit(end as u64).unwrap();
 
-        decoder.seek(SeekFrom::Start(69 * LINE_LEN as u64)).unwrap();
-        verify_decomp(&mut decoder, 69, LINES_IN_DOC - 1);
+        // Seek from start
+        decoder.seek(SeekFrom::Start(seek_pos as u64)).unwrap();
+        assert_eq!(decoder.offset(), seek_pos as u64);
+        let mut output = vec![0; input.len()];
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, end - seek_pos);
+        assert_eq!(input[seek_pos..end], output[..n]);
+        // Reading moves offset accordingly
+        assert_eq!(decoder.offset(), end as u64);
 
-        decoder
-            .seek(SeekFrom::End(-(111 * LINE_LEN as i64)))
-            .unwrap();
+        // Seek from end
+        let seek_pos = -123;
+        let start = (input.len() as i64 + seek_pos) as usize;
+        assert_ne!(decoder.read_compressed(), 0);
+        decoder.seek(SeekFrom::End(seek_pos)).unwrap();
+        assert_eq!(decoder.offset(), input.len() as u64 - 123);
         assert_eq!(decoder.read_compressed(), 0);
-        verify_decomp(&mut decoder, LINES_IN_DOC - 111, LINES_IN_DOC - 1);
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, end - start);
+        assert_eq!(input[start..end], output[..n]);
 
         // Positive seek from current
-        decoder.seek(SeekFrom::Start(69 * LINE_LEN as u64)).unwrap();
-        decoder.seek(SeekFrom::Current(LINE_LEN as i64)).unwrap();
-        verify_decomp(&mut decoder, 70, LINES_IN_DOC - 1);
+        decoder.seek(SeekFrom::Start(69)).unwrap();
+        decoder.seek(SeekFrom::Current(10)).unwrap();
+        assert_eq!(decoder.offset(), 79);
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, end - 79);
+        assert_eq!(input[79..end], output[..n]);
 
         // Negative seek from current
-        decoder.seek(SeekFrom::Start(69 * LINE_LEN as u64)).unwrap();
-        decoder.seek(SeekFrom::Current(-(LINE_LEN as i64))).unwrap();
-        verify_decomp(&mut decoder, 68, LINES_IN_DOC - 1);
-
-        // Reading moves offset accordingly
-        decoder.seek(SeekFrom::End(-(2 * LINE_LEN as i64))).unwrap();
-        decoder.read_exact(&mut [0; LINE_LEN as usize]).unwrap();
-        verify_decomp(&mut decoder, LINES_IN_DOC - 1, LINES_IN_DOC - 1);
+        decoder.seek(SeekFrom::Start(69)).unwrap();
+        decoder.seek(SeekFrom::Current(-10)).unwrap();
+        assert_eq!(decoder.offset(), 59);
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, end - 59);
+        assert_eq!(input[59..end], output[..n]);
     }
 
     #[test]
-    fn seek_within_frame_continues_decompression() {
-        let (_, seekable) = input_and_seekable();
+    fn set_offset_within_frame_continues_decompression() {
+        let input = fs::read(test_input()).unwrap();
+        let seekable = new_seekable(&input, Some(FrameSizePolicy::Uncompressed(100)));
         let mut decoder = Decoder::new(seekable).unwrap();
         assert_eq!(decoder.read_compressed(), 0);
 
-        decoder.seek(SeekFrom::Start(10 * LINE_LEN as u64)).unwrap();
-        decoder.read_exact(&mut [0; LINE_LEN as usize]).unwrap();
+        decoder.set_offset(10).unwrap();
+        decoder.read_exact(&mut [0; 10]).unwrap();
         assert_ne!(decoder.read_compressed(), 0);
 
-        decoder.seek(SeekFrom::Start(16 * LINE_LEN as u64)).unwrap();
+        // No reset when frame doesn't change and offset > current offset
+        decoder.set_offset(30).unwrap();
+        assert_eq!(decoder.offset(), 30);
         assert_ne!(decoder.read_compressed(), 0);
-        verify_decomp(&mut decoder, 16, LINES_IN_DOC);
+        let mut output = vec![0; input.len()];
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, input.len() - 30);
+        assert_eq!(input[30..], output[..n]);
 
-        decoder.seek(SeekFrom::End(-(LINE_LEN as i64))).unwrap();
+        // Reset when offset is in another frame
+        decoder.set_offset(101).unwrap();
+        assert_eq!(decoder.offset(), 101);
         assert_eq!(decoder.read_compressed(), 0);
-        verify_decomp(&mut decoder, LINES_IN_DOC - 1, LINES_IN_DOC);
-    }
-
-    #[test]
-    fn offset_gets_set_correctly() {
-        let (_, seekable) = input_and_seekable();
-        let mut decoder = Decoder::new(seekable).unwrap();
-        assert_eq!(decoder.offset(), 0);
-
-        decoder.set_offset((555 * LINE_LEN).into()).unwrap();
-        assert_eq!(decoder.offset(), (555 * LINE_LEN).into());
-        decoder.seek(SeekFrom::Start(10 * LINE_LEN as u64)).unwrap();
-        assert_eq!(decoder.offset(), (10 * LINE_LEN).into());
-        decoder.read_exact(&mut [0; LINE_LEN as usize]).unwrap();
-        assert_eq!(decoder.offset(), (11 * LINE_LEN).into());
+        let n = decoder.decompress(&mut output).unwrap();
+        assert_eq!(n, input.len() - 101);
+        assert_eq!(input[101..], output[..n]);
     }
 }

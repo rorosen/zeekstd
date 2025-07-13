@@ -470,7 +470,6 @@ fn list_seekable() {
         .stdout
         .clone();
 
-    dbg!(str::from_utf8(&out).unwrap());
     // Expect 16 lines
     assert_eq!(16, out.iter().filter(|x| **x == b'\n').count());
 }
