@@ -3,7 +3,6 @@ use std::{
     fs::{self, File},
     io::{self, IsTerminal, Read, Write},
     ops::Deref,
-    os::unix::fs::FileTypeExt,
     path::{Path, PathBuf},
 };
 
@@ -51,8 +50,16 @@ pub fn checked_out_file(
     force_write_stdout: bool,
 ) -> Result<File> {
     let meta = fs::metadata(path).ok();
-    if !force_write_stdout && path.exists() && !meta.is_some_and(|m| m.file_type().is_char_device())
-    {
+
+    #[cfg(not(windows))]
+    let is_char_device = |m: std::fs::Metadata| -> bool {
+        use std::os::unix::fs::FileTypeExt;
+        m.file_type().is_char_device()
+    };
+    #[cfg(windows)]
+    let is_char_device = |_m: std::fs::Metadata| -> bool { false };
+
+    if !force_write_stdout && path.exists() && !meta.is_some_and(is_char_device) {
         // Refuse to overwrite existing file when quiet or input via stdin
         if is_quiet || in_path.is_none() {
             bail!("{} already exists; not overwritten", path.display());
