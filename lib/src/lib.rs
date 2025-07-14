@@ -50,8 +50,21 @@
 //! # use zeekstd::Decoder;
 //! # let seekable = File::open("seekable.zst")?;
 //! # let mut decoder = Decoder::new(seekable)?;
-//! decoder.set_lower_frame(2);
-//! decoder.set_upper_frame(3);
+//! decoder.set_lower_frame(2)?;
+//! decoder.set_upper_frame(3)?;
+//! io::copy(&mut decoder, &mut io::stdout())?;
+//! # Ok::<(), zeekstd::Error>(())
+//! ```
+//!
+//! Or between arbitrary byte offsets.
+//!
+//! ```no_run
+//! # use std::{fs::File, io};
+//! # use zeekstd::Decoder;
+//! # let seekable = File::open("seekable.zst")?;
+//! # let mut decoder = Decoder::new(seekable)?;
+//! decoder.set_offset(123)?;
+//! decoder.set_offset_limit(456)?;
 //! io::copy(&mut decoder, &mut io::stdout())?;
 //! # Ok::<(), zeekstd::Error>(())
 //! ```
