@@ -13,9 +13,6 @@ readme.workspace = true
 [dependencies]
 zstd-safe = { workspace = true, features = ["std"] }
 
-[dev-dependencies]
-rand = "0.9.1"
-
 [dev-dependencies.zstd-safe]
 workspace = true
 features = ["seekable"]

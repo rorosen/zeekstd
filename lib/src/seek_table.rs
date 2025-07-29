@@ -105,6 +105,8 @@ struct Entries(Vec<Entry>);
 
 impl Entries {
     fn with_num_frames(num_frames: usize) -> Self {
+        // Make sure there is always space for one frame
+        let num_frames = num_frames.max(1);
         let cap = core::mem::size_of::<Entry>() * num_frames;
         Self(Vec::with_capacity(cap))
     }
@@ -186,36 +188,30 @@ impl Parser {
     ///
     /// Only parses complete frames, returns the number of bytes consumed.
     fn parse_entries(&mut self, buf: &[u8]) -> usize {
-        let Self {
-            entries,
-            c_offset,
-            d_offset,
-            ..
-        } = self;
-
         let mut pos: usize = 0;
-        while entries.0.len() < self.num_frames {
+        while self.entries.0.len() < self.num_frames {
             if pos + self.size_per_frame > buf.len() {
                 return pos;
             }
 
-            entries.0.push(Entry {
-                c_offset: *c_offset,
-                d_offset: *d_offset,
-            });
+            self.log_entry();
             // Casting u32 to u64 is fine
-            *c_offset += read_le32!(buf, pos) as u64;
-            *d_offset += read_le32!(buf, pos + 4) as u64;
+            self.c_offset += read_le32!(buf, pos) as u64;
+            self.d_offset += read_le32!(buf, pos + 4) as u64;
             pos += self.size_per_frame;
         }
 
         // Add a final entry that marks the end of the last frame
-        entries.0.push(Entry {
-            c_offset: *c_offset,
-            d_offset: *d_offset,
-        });
+        self.log_entry();
 
         pos
+    }
+
+    fn log_entry(&mut self) {
+        self.entries.0.push(Entry {
+            c_offset: self.c_offset,
+            d_offset: self.d_offset,
+        });
     }
 
     fn verify(&self) -> Result<()> {
@@ -223,14 +219,6 @@ impl Parser {
             Ok(())
         } else {
             Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected))
-        }
-    }
-}
-
-impl From<Parser> for SeekTable {
-    fn from(value: Parser) -> Self {
-        SeekTable {
-            entries: value.entries,
         }
     }
 }
@@ -274,6 +262,14 @@ impl Default for SeekTable {
     }
 }
 
+impl From<Parser> for SeekTable {
+    fn from(value: Parser) -> Self {
+        SeekTable {
+            entries: value.entries,
+        }
+    }
+}
+
 impl SeekTable {
     /// Create a new, empty seek table.
     pub fn new() -> Self {
@@ -312,10 +308,11 @@ impl SeekTable {
         let mut parser = Parser::from_integrity(&footer)?;
         src.seek_to_seek_table_start(parser.seek_table_size)?;
 
-        let len = 8192.min(parser.seek_table_size + SKIPPABLE_HEADER_SIZE);
+        // No need to read integrity field again
+        let len = 8192.min(parser.seek_table_size - SEEK_TABLE_INTEGRITY_SIZE);
         let mut buf = vec![0u8; len];
         let mut read = 0;
-        while read < 8 {
+        while read < SKIPPABLE_HEADER_SIZE {
             let n = src.read(&mut buf)?;
             if n == 0 {
                 // Error if src is EOF already
@@ -325,16 +322,22 @@ impl SeekTable {
         }
         parser.verify_skippable_header(&buf[..SKIPPABLE_HEADER_SIZE])?;
         buf.drain(..SKIPPABLE_HEADER_SIZE);
-        let len = buf.len();
+        let buf_len = buf.len();
+
+        // Data that is left to be parsed
+        let mut remaining =
+            parser.seek_table_size - SKIPPABLE_HEADER_SIZE - SEEK_TABLE_INTEGRITY_SIZE;
 
         loop {
             let n = parser.parse_entries(&buf);
-            if n == 0 {
+            remaining -= n;
+            if remaining == 0 {
                 break;
             }
             buf.copy_within(n.., 0);
-            if src.read(&mut buf[len - n..])? == 0 {
-                break;
+            if remaining > 0 && src.read(&mut buf[buf_len - n..buf_len.min(remaining)])? == 0 {
+                // Error if src is EOF but there is data remaining
+                return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected));
             }
         }
         parser.verify()?;
@@ -408,20 +411,27 @@ impl SeekTable {
         let mut parser = Parser::from_integrity(&buf[SKIPPABLE_HEADER_SIZE..])?;
         parser.verify_skippable_header(&buf)?;
 
-        let len = 8192.min(parser.seek_table_size);
-        let mut buf = vec![0u8; len];
+        // Data that is left to be parsed
+        let mut remaining =
+            parser.seek_table_size - SKIPPABLE_HEADER_SIZE - SEEK_TABLE_INTEGRITY_SIZE;
+        let mut buf = vec![0u8; 8192.min(remaining)];
+        let buf_len = buf.len();
 
         let mut offset = 0;
         loop {
-            if reader.read(&mut buf[offset..])? == 0 {
-                break;
+            if remaining > 0 && reader.read(&mut buf[offset..buf_len.min(remaining)])? == 0 {
+                // Error if src is EOF but there is data remaining
+                return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected));
             }
+
             let n = parser.parse_entries(&buf);
-            if n == 0 {
+            remaining -= n;
+            if remaining == 0 {
                 break;
             }
+
+            offset = buf_len - n;
             buf.copy_within(n.., 0);
-            offset = buf.len() - n;
         }
         parser.verify()?;
 
@@ -761,18 +771,17 @@ mod tests {
 
     use super::*;
 
-    use rand::Rng;
-    use zstd_safe::{OutBuffer, seekable::FrameLog};
+    use zstd_safe::OutBuffer;
 
-    fn seek_table() -> SeekTable {
-        let mut rng = rand::rng();
+    fn seek_table(num_frames: u32) -> SeekTable {
         let mut st = SeekTable::new();
-        let num_frames = rng.random_range(4096..65536);
 
+        let mut c_size = 3;
+        let mut d_size = 6;
         for _ in 0..num_frames {
-            let c_size = rng.random();
-            let d_size = rng.random();
             st.log_frame(c_size, d_size).unwrap();
+            c_size += 1;
+            d_size += 1;
         }
 
         st
@@ -811,8 +820,10 @@ mod tests {
         assert_eq!(st.max_frame_size_decomp(), NUM_FRAMES as u64 * 13);
     }
 
-    fn test_serialize(format: Format) {
-        let mut ser = seek_table().clone().into_format_serializer(format);
+    fn test_serialize(format: Format, num_frames: u32) {
+        let mut ser = seek_table(num_frames)
+            .clone()
+            .into_format_serializer(format);
 
         // Complete serialization
         let mut buf = vec![0; ser.encoded_len()];
@@ -826,30 +837,23 @@ mod tests {
         ser.reset();
 
         // Multiple write calls with changing buffer sizes
-        let mut rng = rand::rng();
         let mut pos = 0;
         while pos < buf.len() {
-            let len = if pos < 20 {
+            let len = if pos < 10 {
                 1
             } else {
-                (buf.len() - pos).min(rng.random_range(1..100))
+                (buf.len() - pos).min(64)
             };
             let n = ser.write_into(&mut buf[pos..pos + len]);
             assert_eq!(n, len);
-            pos += len;
+            pos += n;
         }
 
         assert_eq!(pos, ser.encoded_len());
     }
 
-    #[test]
-    fn serialize() {
-        test_serialize(Format::Head);
-        test_serialize(Format::Foot);
-    }
-
-    fn test_serde_cycle(format: Format) {
-        let st = seek_table();
+    fn test_serde_cycle(format: Format, num_frames: u32) {
+        let st = seek_table(num_frames);
         let mut ser = st.clone().into_format_serializer(format);
 
         let mut buf = vec![0; ser.encoded_len()];
@@ -872,15 +876,8 @@ mod tests {
         assert_eq!(deserialized, st);
     }
 
-    #[test]
-    fn serde_cycle() {
-        test_serde_cycle(Format::Head);
-        test_serde_cycle(Format::Foot);
-    }
-
-    #[test]
-    fn serialize_compatible_with_zstd_seekable() {
-        let st = seek_table();
+    fn test_serialize_compatible_with_zstd_seekable(num_frames: u32) {
+        let st = seek_table(num_frames);
         let mut ser = st.clone().into_serializer();
         let mut buf = vec![0; ser.encoded_len()];
         let n = ser.write_into(&mut buf);
@@ -910,15 +907,56 @@ mod tests {
         }
     }
 
+    fn seek_table_ranges(fun: impl Fn(u32)) {
+        // Small number of frames
+        for n in 0..=15 {
+            fun(n);
+        }
+
+        // Seek table size is around buffer size (8192), led to problems in the past
+        for n in 1010..=1040 {
+            fun(n);
+        }
+
+        // Around double buffer size (16384)
+        for n in 2020..=2050 {
+            fun(n);
+        }
+    }
+
+    #[test]
+    fn serialize() {
+        seek_table_ranges(|n| {
+            test_serialize(Format::Head, n);
+            test_serialize(Format::Foot, n);
+        });
+    }
+
+    #[test]
+    fn serde_cycle() {
+        seek_table_ranges(|n| {
+            test_serde_cycle(Format::Head, n);
+            test_serde_cycle(Format::Foot, n);
+        });
+    }
+
+    #[test]
+    fn serialize_compatible_with_zstd_seekable() {
+        seek_table_ranges(|n| {
+            test_serialize_compatible_with_zstd_seekable(n);
+        });
+    }
+
     #[test]
     fn deserialize_compatible_with_zstd_seekable() {
         const NUM_FRAMES: u32 = 1234;
-        let mut fl = FrameLog::create(true);
+        let mut fl = zstd_safe::seekable::FrameLog::create(true);
 
         for i in 1..=NUM_FRAMES {
             fl.log_frame(i * 7, i * 13, Some(i)).unwrap();
         }
 
+        // frame size of zstd seekable is 12,  c_size, d_size, checksum each 4
         let cap = SKIPPABLE_HEADER_SIZE + (NUM_FRAMES * 12) as usize + SEEK_TABLE_INTEGRITY_SIZE;
         let mut buf = vec![0; cap];
         let mut out_buf = OutBuffer::around(&mut buf);
