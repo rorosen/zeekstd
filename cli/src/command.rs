@@ -200,6 +200,7 @@ impl Command {
 
                 Executor {
                     mode,
+                    quiet: flags.quiet,
                     in_path: in_path.unwrap_or("STDIN".into()),
                     byte_fmt,
                 }
@@ -222,6 +223,7 @@ impl Command {
 
                 Executor {
                     mode,
+                    quiet: flags.quiet,
                     in_path: args.input_file,
                     byte_fmt,
                 }
@@ -252,6 +254,7 @@ impl Command {
 
                 Executor {
                     mode,
+                    quiet: flags.quiet,
                     in_path: args.input_file,
                     byte_fmt,
                 }
@@ -288,6 +291,7 @@ enum ExecMode<'a> {
 
 struct Executor<'a> {
     mode: ExecMode<'a>,
+    quiet: bool,
     in_path: String,
     byte_fmt: fn(u64) -> String,
 }
@@ -309,13 +313,15 @@ impl Executor<'_> {
                 let (read, written) =
                     compressor.compress_reader(&mut reader, prefix.as_deref(), bar.as_ref())?;
 
-                eprintln!(
-                    "{in_path} : {ratio:.2}% ( {bytes_read} => {bytes_written}, {out_path})",
-                    in_path = self.in_path,
-                    ratio = 100. / read as f64 * written as f64,
-                    bytes_read = (self.byte_fmt)(read),
-                    bytes_written = (self.byte_fmt)(written),
-                );
+                if !self.quiet {
+                    eprintln!(
+                        "{in_path} : {ratio:.2}% ( {bytes_read} => {bytes_written}, {out_path})",
+                        in_path = self.in_path,
+                        ratio = 100. / read as f64 * written as f64,
+                        bytes_read = (self.byte_fmt)(read),
+                        bytes_written = (self.byte_fmt)(written),
+                    );
+                }
             }
             ExecMode::Decompress {
                 decompressor,
@@ -329,11 +335,13 @@ impl Executor<'_> {
                 let written =
                     decompressor.decompress_into(&mut writer, prefix.as_deref(), bar.as_ref())?;
 
-                eprintln!(
-                    "{in_path} : {bytes_written}",
-                    in_path = self.in_path,
-                    bytes_written = (self.byte_fmt)(written)
-                );
+                if !self.quiet {
+                    eprintln!(
+                        "{in_path} : {bytes_written}",
+                        in_path = self.in_path,
+                        bytes_written = (self.byte_fmt)(written)
+                    );
+                }
             }
             ExecMode::List {
                 seek_table,

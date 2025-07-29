@@ -87,7 +87,7 @@ impl FromStr for LastFrame {
 
 #[derive(Debug, Parser, Clone)]
 pub struct CliFlags {
-    /// Suppress output.
+    /// Suppress output. Ignored in list mode.
     #[arg(short, long, action, global = true)]
     pub quiet: bool,
 
