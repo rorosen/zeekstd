@@ -41,11 +41,19 @@ See `zeekstd compress --help` for all available compression options.
 
 ## Decompression
 
-Decompress seekable archives with the `decompress` subcommand.
+Decompress seekable archives with the `decompress` subcommand. Per default the complete input is
+decompressed.
 
 ```bash
 $ zeekstd decompress numbers.txt.zst
 numbers.txt.zst : 106.34 KiB
+```
+
+Alternatively, decompress between arbitrary byte offsets.
+
+```bash
+$ zeekstd decompress --from 113 --to 117 numbers.txt.zst -cfq
+42
 ```
 
 See `zeekstd decompress --help` for all available decompression options.
@@ -54,7 +62,7 @@ See `zeekstd decompress --help` for all available decompression options.
 
 Print information about a seekable archive with the `list` subcommand. When called with no further
 arguments, it will print general information similar to `zstd -l`, pass the `--detail` flag to list
-all frames.
+all frames individually.
 
 ```bash
 $ zeekstd list numbers.txt.zst
