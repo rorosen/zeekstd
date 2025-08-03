@@ -5,7 +5,7 @@ use indicatif::ProgressBar;
 use zeekstd::{DecodeOptions, Decoder, SeekTable};
 use zstd_safe::{DCtx, DParameter};
 
-use crate::{args::DecompressArgs, highbit_64};
+use crate::args::DecompressArgs;
 
 pub struct Decompressor<'a> {
     decoder: Decoder<'a, File>,
@@ -33,7 +33,8 @@ impl Decompressor<'_> {
 
         let mut dctx = DCtx::try_create().context("Failed to create decompression context")?;
         if let Some(len) = prefix_len {
-            dctx.set_parameter(DParameter::WindowLogMax(highbit_64(len)))
+            let window_log_max = if len == 0 { 0 } else { len.ilog2() + 1 };
+            dctx.set_parameter(DParameter::WindowLogMax(window_log_max))
                 .map_err(|c| {
                     anyhow!(
                         "Failed to set max window log: {}",

@@ -8,7 +8,7 @@ use indicatif::ProgressBar;
 use zeekstd::{EncodeOptions, Encoder, seek_table::Format};
 use zstd_safe::{CCtx, CParameter};
 
-use crate::{args::CompressArgs, highbit_64};
+use crate::args::CompressArgs;
 
 pub struct Compressor<'a, W> {
     encoder: Encoder<'a, W>,
@@ -26,7 +26,8 @@ impl<W> Compressor<'_, W> {
         let mut cctx = CCtx::try_create().context("Failed to create compression context")?;
 
         if let Some(len) = prefix_len {
-            cctx.set_parameter(CParameter::WindowLog(highbit_64(len)))
+            let window_log = if len == 0 { 0 } else { len.ilog2() + 1 };
+            cctx.set_parameter(CParameter::WindowLog(window_log))
                 .map_err(|c| cctx_err("Failed to set window log", c))?;
             cctx.set_parameter(CParameter::EnableLongDistanceMatching(true))
                 .map_err(|c| cctx_err("Failed to enable long distance matching", c))?;
