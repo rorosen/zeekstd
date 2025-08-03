@@ -16,9 +16,9 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.98"
-clap = { version = "4.5.40", features = ["derive"] }
+clap = { version = "4.5.42", features = ["derive"] }
 indicatif = "0.18.0"
-memmap2 = "0.9.5"
+memmap2 = "0.9.7"
 zeekstd = { path = "../lib" }
 zstd-safe.workspace = true
 
