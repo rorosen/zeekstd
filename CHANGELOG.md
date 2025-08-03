@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1-lib]
+
+### Added
+
+- Use property testing
+
+### Fixed
+
+- Parsing a seek table with 1022 frames does not falsely yield a "corruption detected" error anymore
+
 ## [0.5.0-lib]
 
 ### Added
