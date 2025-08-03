@@ -55,7 +55,10 @@
           };
 
           devShells.default = pkgs.mkShell {
-            packages = [ pkgs.cargo-edit ];
+            packages = [
+              pkgs.cargo-edit
+              pkgs.cargo-msrv
+            ];
           };
         };
     };
