@@ -107,6 +107,7 @@ mod tests {
         path::PathBuf,
     };
 
+    use proptest::prelude::*;
     use zstd_safe::DCtx;
 
     use crate::seek_table::Format;
@@ -120,11 +121,15 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/kaestner.txt")
     }
 
-    #[test]
-    fn cycle() {
+    fn test_cycle(frame_size_policy: Option<FrameSizePolicy>) {
         let input = fs::read(test_input()).unwrap();
         let mut seekable = Cursor::new(vec![]);
-        let mut encoder = Encoder::new(&mut seekable).unwrap();
+        let mut opts = EncodeOptions::new();
+        if let Some(policy) = frame_size_policy {
+            opts = opts.frame_size_policy(policy);
+        }
+
+        let mut encoder = opts.into_encoder(&mut seekable).unwrap();
 
         // Compress the input in multiple steps
         encoder.compress(&input[..input.len() / 2]).unwrap();
@@ -139,6 +144,23 @@ mod tests {
         io::copy(&mut decoder, &mut output).unwrap();
 
         assert_eq!(&input, output.get_ref());
+    }
+
+    #[test]
+    fn cycle() {
+        test_cycle(None);
+    }
+
+    proptest! {
+        #[test]
+        fn cycle_custom_compressed_frame_size(frame_size in 1..256u32) {
+            test_cycle(Some(FrameSizePolicy::Compressed(frame_size)));
+        }
+
+        #[test]
+        fn cycle_custom_decompressed_frame_size(frame_size in 1..512u32) {
+            test_cycle(Some(FrameSizePolicy::Uncompressed(frame_size)));
+        }
     }
 
     #[test]

@@ -771,6 +771,7 @@ mod tests {
 
     use super::*;
 
+    use proptest::prelude::*;
     use zstd_safe::OutBuffer;
 
     fn seek_table(num_frames: u32) -> SeekTable {
@@ -820,7 +821,7 @@ mod tests {
         assert_eq!(st.max_frame_size_decomp(), NUM_FRAMES as u64 * 13);
     }
 
-    fn test_serialize(format: Format, num_frames: u32) {
+    fn test_serialize(format: Format, num_frames: u32, buf_len: usize) {
         let mut ser = seek_table(num_frames)
             .clone()
             .into_format_serializer(format);
@@ -837,15 +838,10 @@ mod tests {
         ser.reset();
 
         // Multiple write calls with changing buffer sizes
+        let mut buf = vec![0; buf_len];
         let mut pos = 0;
-        while pos < buf.len() {
-            let len = if pos < 10 {
-                1
-            } else {
-                (buf.len() - pos).min(64)
-            };
-            let n = ser.write_into(&mut buf[pos..pos + len]);
-            assert_eq!(n, len);
+        while pos < ser.encoded_len() {
+            let n = ser.write_into(&mut buf);
             pos += n;
         }
 
@@ -907,44 +903,25 @@ mod tests {
         }
     }
 
-    fn seek_table_ranges(fun: impl Fn(u32)) {
-        // Small number of frames
-        for n in 0..=15 {
-            fun(n);
+    // Test with varying number of frames. More frames slow down tests, the used frame size
+    // range should cover all edge cases.
+    proptest! {
+        #[test]
+        fn serialize(num_frames in 0..2048u32, buf_len in 1..64usize) {
+            test_serialize(Format::Head, num_frames, buf_len);
+            test_serialize(Format::Foot, num_frames, buf_len);
         }
 
-        // Seek table size is around buffer size (8192), led to problems in the past
-        for n in 1010..=1040 {
-            fun(n);
+        #[test]
+        fn serde_cycle(num_frames in 0..2048u32) {
+            test_serde_cycle(Format::Head, num_frames);
+            test_serde_cycle(Format::Foot, num_frames);
         }
 
-        // Around double buffer size (16384)
-        for n in 2020..=2050 {
-            fun(n);
+        #[test]
+        fn serialize_compatible_with_zstd_seekable(num_frames in 0..2048u32) {
+            test_serialize_compatible_with_zstd_seekable(num_frames);
         }
-    }
-
-    #[test]
-    fn serialize() {
-        seek_table_ranges(|n| {
-            test_serialize(Format::Head, n);
-            test_serialize(Format::Foot, n);
-        });
-    }
-
-    #[test]
-    fn serde_cycle() {
-        seek_table_ranges(|n| {
-            test_serde_cycle(Format::Head, n);
-            test_serde_cycle(Format::Foot, n);
-        });
-    }
-
-    #[test]
-    fn serialize_compatible_with_zstd_seekable() {
-        seek_table_ranges(|n| {
-            test_serialize_compatible_with_zstd_seekable(n);
-        });
     }
 
     #[test]

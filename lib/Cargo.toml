@@ -13,6 +13,9 @@ readme.workspace = true
 [dependencies]
 zstd-safe = { workspace = true, features = ["std"] }
 
+[dev-dependencies]
+proptest = "1.7.0"
+
 [dev-dependencies.zstd-safe]
 workspace = true
 features = ["seekable"]
