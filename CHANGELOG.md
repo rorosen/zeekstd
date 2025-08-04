@@ -17,6 +17,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Parsing a seek table with 1022 frames does not falsely yield a "corruption detected" error anymore
 
+## [0.4.1-cli]
+
+### Fixed
+
+- Parsing a seek table with 1022 frames does not falsely yield a "corruption detected" error anymore
+
 ## [0.5.0-lib]
 
 ### Added
@@ -35,7 +41,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `Decoder::set_lower_frame` and `Decoder::set_upper_frame` return a `Result` now
 
-## [0.4.0-lib]
+## [0.4.0-cli]
 
 ### Added
 
