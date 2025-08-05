@@ -21,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The window size that is used when creating/applying binary patches is now always big enough to fit
+  the complete prefix.
 - Parsing a seek table with 1022 frames does not falsely yield a "corruption detected" error anymore
 
 ## [0.5.0-lib]
