@@ -1,6 +1,11 @@
 use zstd_safe::{DCtx, InBuffer, OutBuffer, ResetDirective};
 
-use crate::{Error, error::Result, seek_table::SeekTable, seekable::Seekable};
+use crate::{
+    Error,
+    error::Result,
+    seek_table::SeekTable,
+    seekable::{OffsetFrom, Seekable},
+};
 
 /// Options that configure how data is decompressed.
 ///
@@ -212,7 +217,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
         if self.read_compressed == 0 {
             let frame_idx = self.seek_table.frame_index_decomp(self.offset);
             let start_pos = self.seek_table.frame_start_comp(frame_idx)?;
-            self.src.set_offset(start_pos)?;
+            self.src.set_offset(OffsetFrom::Start(start_pos))?;
             self.decomp_pos = self.seek_table.frame_start_decomp(frame_idx)?;
             // Reference prefix at the beginning of decompression
             if let Some(pref) = prefix {

@@ -82,7 +82,7 @@ pub use decode::{DecodeOptions, Decoder};
 pub use encode::{EncodeOptions, Encoder, FrameSizePolicy, RawEncoder};
 pub use error::{Error, Result};
 pub use seek_table::SeekTable;
-pub use seekable::{BytesWrapper, Seekable};
+pub use seekable::{BytesWrapper, OffsetFrom, Seekable};
 // Re-export as it's part of the API.
 pub use zstd_safe::CompressionLevel;
 
@@ -94,6 +94,10 @@ pub const SEEKABLE_MAX_FRAMES: u32 = 0x0800_0000;
 pub const SEEK_TABLE_INTEGRITY_SIZE: usize = 9;
 /// The maximum size of the uncompressed data of a frame.
 pub const SEEKABLE_MAX_FRAME_SIZE: usize = 0x4000_0000;
+/// The size of the skippable frame header.
+///
+/// Skippable magic number (4 bytes) + frame size field (4 bytes)
+pub(crate) const SKIPPABLE_HEADER_SIZE: usize = 8;
 
 #[doc = include_str!("../../README.md")]
 #[cfg(doctest)]

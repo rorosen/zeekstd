@@ -1,7 +1,16 @@
 use crate::{
-    SEEK_TABLE_INTEGRITY_SIZE,
+    SEEK_TABLE_INTEGRITY_SIZE, SKIPPABLE_HEADER_SIZE,
     error::{Error, Result},
+    seek_table::Format,
 };
+
+/// Enumeration of possible methods to set the offset within a [`Seekable`] object.
+pub enum OffsetFrom {
+    /// Sets the offset to the provided number of bytes.
+    Start(u64),
+    /// Sets the offset to the size of this object plus the specified number of bytes.
+    End(i64),
+}
 
 /// Represents a seekable source.
 pub trait Seekable {
@@ -10,7 +19,7 @@ pub trait Seekable {
     /// # Errors
     ///
     /// Fails if the offset cannot be set. e.g. because it is out of range.
-    fn set_offset(&mut self, offset: u64) -> Result<()>;
+    fn set_offset(&mut self, offset: OffsetFrom) -> Result<()>;
 
     /// Pull some bytes from this source into `buf`, returning how many bytes were read.
     ///
@@ -19,21 +28,12 @@ pub trait Seekable {
     /// If the read operation fails.
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
-    /// Returns the footer of this seekable.
-    ///
-    /// The footer typically contains the integrity field of the seek table.
+    /// Returns the integrity field of this seekable.
     ///
     /// # Errors
     ///
-    /// Fails if the footer cannot be retrieved.
-    fn seek_table_footer(&mut self) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]>;
-
-    /// Seeks to the start of the seek table.
-    ///
-    /// # Errors
-    ///
-    /// Fails if `seek_table_size` is out of range.
-    fn seek_to_seek_table_start(&mut self, seek_table_size: usize) -> Result<()>;
+    /// Fails if the integrity field cannot be retrieved.
+    fn seek_table_integrity(&mut self, format: Format) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]>;
 }
 
 /// A seekable wrapper around a byte slice.
@@ -50,43 +50,57 @@ impl<'a> BytesWrapper<'a> {
 }
 
 impl Seekable for BytesWrapper<'_> {
-    fn set_offset(&mut self, offset: u64) -> Result<()> {
-        let off_usize: usize = offset.try_into()?;
-        if off_usize > self.src.len() {
+    fn set_offset(&mut self, offset: OffsetFrom) -> Result<()> {
+        let pos = match offset {
+            OffsetFrom::Start(pos) => usize::try_from(pos).ok(),
+            OffsetFrom::End(delta) => isize::try_from(delta)
+                .map(|d| self.src.len().checked_add_signed(d))
+                .ok()
+                .flatten(),
+        }
+        .ok_or(Error::offset_out_of_range())?;
+
+        if pos > self.src.len() {
             return Err(Error::offset_out_of_range());
         }
 
-        self.pos = off_usize;
+        self.pos = pos;
+
         Ok(())
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let limit = buf.len().min(self.src.len() - self.pos);
-        buf[..limit].copy_from_slice(&self.src[self.pos..self.pos + limit]);
-        self.pos += limit;
+        let len = buf.len().min(self.src.len() - self.pos);
+        buf[..len].copy_from_slice(&self.src[self.pos..self.pos + len]);
+        self.pos += len;
 
-        Ok(limit)
+        Ok(len)
     }
 
-    fn seek_table_footer(&mut self) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]> {
+    fn seek_table_integrity(&mut self, format: Format) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]> {
+        let offset = match format {
+            Format::Head => (self.src.len() >= SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE)
+                .then_some(SKIPPABLE_HEADER_SIZE),
+            // Last 9 bytes
+            Format::Foot => self.src.len().checked_sub(SEEK_TABLE_INTEGRITY_SIZE),
+        }
+        .ok_or(Error::offset_out_of_range())?;
+
         let mut buf = [0u8; SEEK_TABLE_INTEGRITY_SIZE];
-        let start_offset = self
-            .src
-            .len()
-            .checked_sub(SEEK_TABLE_INTEGRITY_SIZE)
-            .ok_or(Error::other("invalid integrity field"))?;
-        buf.copy_from_slice(&self.src[start_offset..]);
+        buf.copy_from_slice(&self.src[offset..offset + SEEK_TABLE_INTEGRITY_SIZE]);
 
         Ok(buf)
     }
+}
 
-    fn seek_to_seek_table_start(&mut self, seek_table_size: usize) -> Result<()> {
-        if seek_table_size > self.src.len() {
-            return Err(Error::offset_out_of_range());
+impl From<OffsetFrom> for std::io::SeekFrom {
+    fn from(value: OffsetFrom) -> Self {
+        use std::io::SeekFrom;
+
+        match value {
+            OffsetFrom::Start(n) => SeekFrom::Start(n),
+            OffsetFrom::End(n) => SeekFrom::End(n),
         }
-
-        self.pos = self.src.len() - seek_table_size;
-        Ok(())
     }
 }
 
@@ -94,8 +108,8 @@ impl<T> Seekable for T
 where
     T: std::io::Read + std::io::Seek,
 {
-    fn set_offset(&mut self, offset: u64) -> Result<()> {
-        self.seek(std::io::SeekFrom::Start(offset))?;
+    fn set_offset(&mut self, offset: OffsetFrom) -> Result<()> {
+        self.seek(offset.into())?;
 
         Ok(())
     }
@@ -104,18 +118,18 @@ where
         Ok(self.read(buf)?)
     }
 
-    fn seek_table_footer(&mut self) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]> {
-        self.seek(std::io::SeekFrom::End(-(SEEK_TABLE_INTEGRITY_SIZE as i64)))?;
+    fn seek_table_integrity(&mut self, format: Format) -> Result<[u8; SEEK_TABLE_INTEGRITY_SIZE]> {
+        match format {
+            Format::Head => self.seek(std::io::SeekFrom::Start(SKIPPABLE_HEADER_SIZE as u64))?,
+            // Last 9 bytes
+            Format::Foot => {
+                self.seek(std::io::SeekFrom::End(-(SEEK_TABLE_INTEGRITY_SIZE as i64)))?
+            }
+        };
+
         let mut buf = [0u8; SEEK_TABLE_INTEGRITY_SIZE];
         self.read_exact(&mut buf)?;
 
         Ok(buf)
-    }
-
-    fn seek_to_seek_table_start(&mut self, seek_table_size: usize) -> Result<()> {
-        let size: i64 = -(seek_table_size.try_into()?);
-        self.seek(std::io::SeekFrom::End(size))?;
-
-        Ok(())
     }
 }

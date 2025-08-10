@@ -3,12 +3,12 @@ use std::io::Read;
 use zstd_safe::zstd_sys::ZSTD_ErrorCode;
 
 use crate::{
-    SEEK_TABLE_INTEGRITY_SIZE, SEEKABLE_MAGIC_NUMBER, SEEKABLE_MAX_FRAMES,
+    SEEK_TABLE_INTEGRITY_SIZE, SEEKABLE_MAGIC_NUMBER, SEEKABLE_MAX_FRAMES, SKIPPABLE_HEADER_SIZE,
     error::{Error, Result},
-    seekable::Seekable,
+    seekable::{OffsetFrom, Seekable},
 };
 
-// Reads 4 bytes from buf starting at offset into an u32
+// Reads 4 bytes (little endian) from buf starting at offset into an u32
 macro_rules! read_le32 {
     ($buf:expr, $offset:expr) => {
         ($buf[$offset] as u32)
@@ -84,8 +84,6 @@ macro_rules! write_integrity {
 
 /// The size of each frame entry in the seek table.
 const SIZE_PER_FRAME: usize = 8;
-/// The size of the skippable frame header.
-const SKIPPABLE_HEADER_SIZE: usize = 8;
 /// The skippable magic number of the skippable frame containing the seek table.
 const SKIPPABLE_MAGIC_NUMBER: u32 = zstd_safe::zstd_sys::ZSTD_MAGIC_SKIPPABLE_START | 0xE;
 
@@ -142,7 +140,7 @@ struct Parser {
 }
 
 impl Parser {
-    fn from_integrity(buf: &[u8]) -> Result<Self> {
+    fn from_bytes(buf: &[u8]) -> Result<Self> {
         if read_le32!(buf, 5) != SEEKABLE_MAGIC_NUMBER {
             return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_prefix_unknown));
         }
@@ -223,11 +221,11 @@ impl Parser {
     }
 }
 
-/// The format that should be used when serializing the seek table.
+/// The format that should be used when serializing or deserializing the seek table.
 ///
-/// The `Head` format will place the seek table integrity field directly after the skippable
-/// header, before any frame data, in the skippable seek table frame. The `Foot` format places the
-/// integrity field at the end of the skippable frame, after any frame data.
+/// In `Head` format the seek table integrity field is placed directly after the skippable
+/// header, before any frame data, in the skippable seek table frame. In `Foot` format the
+/// integrity field is placed at the end of the skippable frame, after any frame data.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Format {
     Head,
@@ -283,8 +281,8 @@ impl SeekTable {
 
     /// Parses the seek table from a seekable archive.
     ///
-    /// This only works if the seek table is in `Foot` format (the integrity field is at the end)
-    /// and is appended to the end of the seekable archive.
+    /// This only works if the seek table is in `Foot` format and is appended to the end of the
+    /// seekable archive.
     ///
     /// # Errors
     ///
@@ -304,12 +302,38 @@ impl SeekTable {
     /// # Ok::<(), zeekstd::Error>(())
     /// ```
     pub fn from_seekable(src: &mut impl Seekable) -> Result<Self> {
-        let footer = src.seek_table_footer()?;
-        let mut parser = Parser::from_integrity(&footer)?;
-        src.seek_to_seek_table_start(parser.seek_table_size)?;
+        Self::from_seekable_format(src, Format::Foot)
+    }
 
-        // No need to read integrity field again
-        let len = 8192.min(parser.seek_table_size - SEEK_TABLE_INTEGRITY_SIZE);
+    /// Parses the seek table from a seekable archive, expecting the given format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the seek table cannot be parsed or validation fails.
+    ///
+    /// # Examples
+    ///
+    /// Anything that implements [`std::io::Read`] and [`std::io::Seek`] can be used as
+    /// a [`Seekable`].
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use zeekstd::{seek_table::Format, SeekTable};
+    ///
+    /// let mut seekable = File::open("seekable.zst")?;
+    /// let seek_table = SeekTable::from_seekable_format(&mut seekable, Format::Head)?;
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
+    pub fn from_seekable_format(src: &mut impl Seekable, format: Format) -> Result<Self> {
+        let integrity = src.seek_table_integrity(format)?;
+        let mut parser = Parser::from_bytes(&integrity)?;
+
+        match format {
+            Format::Head => src.set_offset(OffsetFrom::Start(0))?,
+            Format::Foot => src.set_offset(OffsetFrom::End(-(parser.seek_table_size as i64)))?,
+        }
+
+        let len = 8192.min(parser.seek_table_size);
         let mut buf = vec![0u8; len];
         let mut read = 0;
         while read < SKIPPABLE_HEADER_SIZE {
@@ -321,10 +345,17 @@ impl SeekTable {
             read += n;
         }
         parser.verify_skippable_header(&buf[..SKIPPABLE_HEADER_SIZE])?;
-        buf.drain(..SKIPPABLE_HEADER_SIZE);
+
+        let mut consumed = SKIPPABLE_HEADER_SIZE;
+        if matches!(format, Format::Head) {
+            consumed += SEEK_TABLE_INTEGRITY_SIZE;
+        }
+
+        // Drain the range we have already consumed (skippable header + integrity field)
+        buf.drain(..consumed);
         let buf_len = buf.len();
 
-        // Data that is left to be parsed
+        // Data that still has to be parsed
         let mut remaining =
             parser.seek_table_size - SKIPPABLE_HEADER_SIZE - SEEK_TABLE_INTEGRITY_SIZE;
 
@@ -370,11 +401,11 @@ impl SeekTable {
         let mut offset = SKIPPABLE_HEADER_SIZE;
         let mut parser = if read_le32!(buf, SKIPPABLE_HEADER_SIZE + 5) == SEEKABLE_MAGIC_NUMBER {
             offset += SEEK_TABLE_INTEGRITY_SIZE;
-            Parser::from_integrity(&buf[SKIPPABLE_HEADER_SIZE..])?
+            Parser::from_bytes(&buf[SKIPPABLE_HEADER_SIZE..])?
         } else {
             let mut integrity = [0u8; SEEK_TABLE_INTEGRITY_SIZE];
             integrity.copy_from_slice(&buf[buf.len() - SEEK_TABLE_INTEGRITY_SIZE..]);
-            Parser::from_integrity(&integrity)?
+            Parser::from_bytes(&integrity)?
         };
 
         parser.verify_skippable_header(&buf[..SKIPPABLE_HEADER_SIZE])?;
@@ -408,7 +439,7 @@ impl SeekTable {
         let mut buf = [0u8; SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE];
         reader.read_exact(&mut buf)?;
 
-        let mut parser = Parser::from_integrity(&buf[SKIPPABLE_HEADER_SIZE..])?;
+        let mut parser = Parser::from_bytes(&buf[SKIPPABLE_HEADER_SIZE..])?;
         parser.verify_skippable_header(&buf)?;
 
         // Data that is left to be parsed
