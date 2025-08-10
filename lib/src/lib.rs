@@ -79,7 +79,9 @@ pub mod seek_table;
 mod seekable;
 
 pub use decode::{DecodeOptions, Decoder};
-pub use encode::{EncodeOptions, Encoder, FrameSizePolicy, RawEncoder};
+pub use encode::{
+    CompressionProgress, EncodeOptions, Encoder, EpilogueProgress, FrameSizePolicy, RawEncoder,
+};
 pub use error::{Error, Result};
 pub use seek_table::SeekTable;
 pub use seekable::{BytesWrapper, OffsetFrom, Seekable};
