@@ -34,6 +34,37 @@ impl Default for FrameSizePolicy {
     }
 }
 
+/// The progress of a compression step.
+#[derive(Debug)]
+pub struct CompressionProgress {
+    /// The input progress, i.e. the number of bytes that were consumed from the input buffer.
+    pub input: usize,
+    /// The output progress, i.e. the number of bytes that were written to the output buffer.
+    pub output: usize,
+}
+
+impl CompressionProgress {
+    fn new(input: usize, output: usize) -> Self {
+        Self { input, output }
+    }
+}
+
+/// The progress of writing the frame epilogue.
+#[derive(Debug)]
+pub struct EpilogueProgress {
+    /// The output progress, i.e. the number of bytes that were written to the output buffer.
+    pub output: usize,
+    /// A minimal estimation of the bytes left to flush. The epilogue is entirely written if this
+    /// value is zero.
+    pub left: usize,
+}
+
+impl EpilogueProgress {
+    fn new(output: usize, left: usize) -> Self {
+        Self { output, left }
+    }
+}
+
 /// Options that configure how data is compressed.
 ///
 /// # Examples
@@ -206,9 +237,8 @@ impl<'a> RawEncoder<'a> {
 
     /// Performs a streaming compression step from `input` to `output`.
     ///
-    /// Call this repetitively to consume the input stream. Will return two numbers `(i, o)` where
-    /// `i` is the input progress, i.e. the number of bytes that were consumed from `input`, and
-    /// `o` is the output progress, i.e. the number of bytes written to `output`. The caller
+    /// Call this repetitively to consume the input stream. The returned [`CompressionProgress`]
+    /// indicates how many bytes were consumed from `input` and written to `output`. The caller
     /// must check if `input` has been entirely consumed. If not, the caller must make some room
     /// to receive more compressed data, and then present again remaining input data.
     ///
@@ -226,18 +256,18 @@ impl<'a> RawEncoder<'a> {
         input: &[u8],
         output: &mut [u8],
         prefix: Option<&'b [u8]>,
-    ) -> Result<(usize, usize)> {
+    ) -> Result<CompressionProgress> {
         if self.is_frame_complete() {
             let mut progress = 0;
             while progress < output.len() {
-                let (out_prog, n) = self.end_frame(&mut output[progress..])?;
-                progress += out_prog;
-                if n == 0 {
+                let prog = self.end_frame(&mut output[progress..])?;
+                progress += prog.output;
+                if prog.left == 0 {
                     break;
                 }
             }
 
-            Ok((0, progress))
+            Ok(CompressionProgress::new(0, progress))
         } else {
             let limit = input.len().min(self.remaining_frame_size());
             let mut in_buf = InBuffer::around(&input[..limit]);
@@ -262,7 +292,7 @@ impl<'a> RawEncoder<'a> {
             self.frame_c_size += out_buf.pos() as u32;
             self.frame_d_size += in_buf.pos() as u32;
 
-            Ok((in_buf.pos(), out_buf.pos()))
+            Ok(CompressionProgress::new(in_buf.pos(), out_buf.pos()))
         }
     }
 
@@ -288,29 +318,29 @@ impl<'a> RawEncoder<'a> {
 impl RawEncoder<'_> {
     /// Performs a streaming compression step from `input` to `output`.
     ///
-    /// Call this repetitively to consume the input stream. Will return two numbers `(i, o)` where
-    /// `i` is the input progress, i.e. the number of bytes that were consumed from `input`, and
-    /// `o` is the output progress, i.e. the number of bytes written to `output`. The caller
+    /// Call this repetitively to consume the input stream. The returned [`CompressionProgress`]
+    /// indicates how many bytes were consumed from `input` and written to `output`. The caller
     /// must check if `input` has been entirely consumed. If not, the caller must make some room
     /// to receive more compressed data, and then present again remaining input data.
     ///
     /// # Errors
     ///
     /// If compression fails or any parameter is invalid.
-    pub fn compress(&mut self, input: &[u8], output: &mut [u8]) -> Result<(usize, usize)> {
+    pub fn compress(&mut self, input: &[u8], output: &mut [u8]) -> Result<CompressionProgress> {
         self.compress_with_prefix(input, output, None)
     }
 
     /// Ends the current frame and adds it to the seek table.
     ///
-    /// Call this repetitively to write the frame epilogue to `output`. Returns two numbers,
-    /// `(o, n)` where `o` is the number of bytes written to `output`, and `n` is a minimal
-    /// estimation of the bytes left to flush. Should be called until `n` is zero.
+    /// Call this repetitively to write the frame epilogue to `output`. The returned
+    /// [`EpilogueProgress`] indicates how many bytes were written to `output` and provides a
+    /// minimal estimation of how many bytes are left to flush. Should be called until no more
+    /// bytes are left to flush.
     ///
     /// # Errors
     ///
     /// Fails if the frame epilogue cannot be created or the frame limit is reached.
-    pub fn end_frame(&mut self, output: &mut [u8]) -> Result<(usize, usize)> {
+    pub fn end_frame(&mut self, output: &mut [u8]) -> Result<EpilogueProgress> {
         let mut empty_buf = InBuffer::around(&[]);
         let mut out_buf = OutBuffer::around(output);
 
@@ -325,7 +355,7 @@ impl RawEncoder<'_> {
             // Casting should always be fine
             self.frame_c_size += (out_buf.pos() - prev_out_pos) as u32;
             if out_buf.pos() == out_buf.capacity() {
-                return Ok((out_buf.pos(), n));
+                return Ok(EpilogueProgress::new(out_buf.pos(), n));
             }
 
             if n == 0 {
@@ -338,7 +368,7 @@ impl RawEncoder<'_> {
         self.reset_frame();
 
         // If we get here the frame is complete
-        Ok((out_buf.pos(), 0))
+        Ok(EpilogueProgress::new(out_buf.pos(), 0))
     }
 
     /// Returns a reference to the internal [`SeekTable`].
@@ -448,19 +478,19 @@ impl<'a, W: std::io::Write> Encoder<'a, W> {
         let mut input_progress = 0;
 
         while input_progress < buf.len() {
-            let (inp_prog, out_prog) = self.raw.compress_with_prefix(
+            let progress = self.raw.compress_with_prefix(
                 &buf[input_progress..],
                 &mut self.out_buf[self.out_buf_pos..],
                 prefix,
             )?;
 
-            if inp_prog == 0 && out_prog == 0 {
+            if progress.input == 0 && progress.output == 0 {
                 break;
             }
 
-            self.out_buf_pos += out_prog;
+            self.out_buf_pos += progress.output;
             self.flush_out_buf(false)?;
-            input_progress += inp_prog;
+            input_progress += progress.input;
         }
 
         Ok(input_progress)
@@ -506,12 +536,12 @@ impl<W: std::io::Write> Encoder<'_, W> {
         let mut progress = 0;
 
         loop {
-            let (prog, n) = self.raw.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
-            self.out_buf_pos += prog;
+            let prog = self.raw.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
+            self.out_buf_pos += prog.output;
             self.flush_out_buf(false)?;
-            progress += prog;
+            progress += prog.output;
 
-            if n == 0 {
+            if prog.left == 0 {
                 return Ok(progress);
             }
         }
