@@ -62,7 +62,7 @@ impl Seekable for BytesWrapper<'_> {
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         let limit = buf.len().min(self.src.len() - self.pos);
-        buf[..limit].copy_from_slice(&self.src[self.pos..limit]);
+        buf[..limit].copy_from_slice(&self.src[self.pos..self.pos + limit]);
         self.pos += limit;
 
         Ok(limit)
