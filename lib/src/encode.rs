@@ -78,7 +78,7 @@ impl EpilogueProgress {
 ///     .checksum_flag(false)
 ///     .compression_level(5)
 ///     .frame_size_policy(FrameSizePolicy::Uncompressed(8192))
-///     .into_raw()?;
+///     .into_raw_encoder()?;
 /// # Ok::<(), zeekstd::Error>(())
 /// ```
 pub struct EncodeOptions<'a> {
@@ -151,7 +151,7 @@ impl<'a> EncodeOptions<'a> {
     /// # Errors
     ///
     /// Fails if the raw encoder cannot be created.
-    pub fn into_raw(self) -> Result<RawEncoder<'a>> {
+    pub fn into_raw_encoder(self) -> Result<RawEncoder<'a>> {
         RawEncoder::with_opts(self)
     }
 
@@ -206,7 +206,7 @@ pub struct RawEncoder<'a> {
 impl<'a> RawEncoder<'a> {
     /// Creates a new `RawEncoder` with default parameters.
     ///
-    /// This is equivalent to calling `EncodeOptions::new().into_raw()`.
+    /// This is equivalent to calling `EncodeOptions::new().into_raw_encoder()`.
     ///
     /// # Errors
     ///
@@ -441,7 +441,7 @@ impl<'a, W> Encoder<'a, W> {
     /// Fails if the encoder could not be created.
     pub fn with_opts(writer: W, opts: EncodeOptions<'a>) -> Result<Self> {
         Ok(Self {
-            raw: opts.into_raw()?,
+            raw: opts.into_raw_encoder()?,
             out_buf: vec![0; CCtx::out_size()],
             out_buf_pos: 0,
             writer,
