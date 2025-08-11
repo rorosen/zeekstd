@@ -258,16 +258,16 @@ impl<'a> RawEncoder<'a> {
         prefix: Option<&'b [u8]>,
     ) -> Result<CompressionProgress> {
         if self.is_frame_complete() {
-            let mut progress = 0;
-            while progress < output.len() {
-                let prog = self.end_frame(&mut output[progress..])?;
-                progress += prog.output;
-                if prog.left == 0 {
+            let mut out_progress = 0;
+            while out_progress < output.len() {
+                let progress = self.end_frame(&mut output[out_progress..])?;
+                out_progress += progress.output;
+                if progress.left == 0 {
                     break;
                 }
             }
 
-            Ok(CompressionProgress::new(0, progress))
+            Ok(CompressionProgress::new(0, out_progress))
         } else {
             let limit = input.len().min(self.remaining_frame_size());
             let mut in_buf = InBuffer::around(&input[..limit]);
@@ -354,12 +354,16 @@ impl RawEncoder<'_> {
 
             // Casting should always be fine
             self.frame_c_size += (out_buf.pos() - prev_out_pos) as u32;
-            if out_buf.pos() == out_buf.capacity() {
-                return Ok(EpilogueProgress::new(out_buf.pos(), n));
-            }
 
+            // Check first if writing the frame epilogue finished before checking whether the out
+            // buffer is full. Changing the order leads to frames not beeing logged when the frame
+            // epilogue fits exactly in the buffer.
             if n == 0 {
                 break;
+            }
+
+            if out_buf.pos() == out_buf.capacity() {
+                return Ok(EpilogueProgress::new(out_buf.pos(), n));
             }
         }
 
