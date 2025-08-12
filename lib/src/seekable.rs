@@ -37,6 +37,7 @@ pub trait Seekable {
 }
 
 /// A seekable wrapper around a byte slice.
+#[derive(Debug, Clone)]
 pub struct BytesWrapper<'a> {
     src: &'a [u8],
     pos: usize,
@@ -93,6 +94,7 @@ impl Seekable for BytesWrapper<'_> {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<OffsetFrom> for std::io::SeekFrom {
     fn from(value: OffsetFrom) -> Self {
         use std::io::SeekFrom;
@@ -104,6 +106,7 @@ impl From<OffsetFrom> for std::io::SeekFrom {
     }
 }
 
+#[cfg(feature = "std")]
 impl<T> Seekable for T
 where
     T: std::io::Read + std::io::Seek,

@@ -1,4 +1,5 @@
-use std::io::Read;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use zstd_safe::zstd_sys::ZSTD_ErrorCode;
 
@@ -435,7 +436,8 @@ impl SeekTable {
     /// let seek_table = SeekTable::from_reader(&mut reader)?;
     /// # Ok::<(), zeekstd::Error>(())
     /// ```
-    pub fn from_reader(reader: &mut impl Read) -> Result<Self> {
+    #[cfg(feature = "std")]
+    pub fn from_reader(reader: &mut impl std::io::Read) -> Result<Self> {
         let mut buf = [0u8; SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE];
         reader.read_exact(&mut buf)?;
 
@@ -790,6 +792,7 @@ impl Serializer {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::io::Read for Serializer {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         Ok(self.write_into(buf))
@@ -798,7 +801,7 @@ impl std::io::Read for Serializer {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{self, Cursor};
+    use crate::BytesWrapper;
 
     use super::*;
 
@@ -890,17 +893,9 @@ mod tests {
         let from_bytes = SeekTable::from_bytes(&buf).unwrap();
         assert_eq!(from_bytes, st);
 
-        ser.reset();
-        let mut seek_table = Cursor::new(Vec::with_capacity(ser.encoded_len()));
-        let n = io::copy(&mut ser, &mut seek_table).unwrap();
-        assert_eq!(n, ser.encoded_len() as u64);
-
-        seek_table.set_position(0);
-        let deserialized = match format {
-            Format::Head => SeekTable::from_reader(&mut seek_table).unwrap(),
-            Format::Foot => SeekTable::from_seekable(&mut seek_table).unwrap(),
-        };
-        assert_eq!(deserialized, st);
+        let mut wrapper = BytesWrapper::new(&buf);
+        let from_seekable = SeekTable::from_seekable_format(&mut wrapper, format).unwrap();
+        assert_eq!(from_seekable, st);
     }
 
     fn test_serialize_compatible_with_zstd_seekable(num_frames: u32) {
@@ -910,32 +905,53 @@ mod tests {
         let n = ser.write_into(&mut buf);
         assert_eq!(n, ser.encoded_len());
 
-        let mut sa = zstd_safe::seekable::Seekable::create();
-        sa.init_buff(&buf).unwrap();
+        let mut seekable = zstd_safe::seekable::Seekable::create();
+        seekable.init_buff(&buf).unwrap();
 
-        assert_eq!(st.num_frames(), sa.num_frames());
+        assert_eq!(st.num_frames(), seekable.num_frames());
         for i in 0..st.num_frames() {
             assert_eq!(
                 st.frame_start_comp(i).unwrap(),
-                sa.frame_compressed_offset(i).unwrap()
+                seekable.frame_compressed_offset(i).unwrap()
             );
             assert_eq!(
                 st.frame_start_decomp(i).unwrap(),
-                sa.frame_decompressed_offset(i).unwrap()
+                seekable.frame_decompressed_offset(i).unwrap()
             );
             assert_eq!(
                 st.frame_size_comp(i).unwrap(),
-                sa.frame_compressed_size(i).unwrap() as u64
+                seekable.frame_compressed_size(i).unwrap() as u64
             );
             assert_eq!(
                 st.frame_size_decomp(i).unwrap(),
-                sa.frame_decompressed_size(i).unwrap() as u64
+                seekable.frame_decompressed_size(i).unwrap() as u64
             );
         }
     }
 
-    // Test with varying number of frames. More frames slow down tests, the used frame size
-    // range should cover all edge cases.
+    #[cfg(feature = "std")]
+    fn test_serde_cycle_std(format: Format, num_frames: u32) {
+        let st = seek_table(num_frames);
+        let mut ser = st.clone().into_format_serializer(format);
+        let mut buf = std::io::Cursor::new(Vec::with_capacity(ser.encoded_len()));
+        let n = std::io::copy(&mut ser, &mut buf).unwrap();
+        assert_eq!(n, ser.encoded_len() as u64);
+
+        let from_bytes = SeekTable::from_bytes(buf.get_ref()).unwrap();
+        assert_eq!(from_bytes, st);
+    }
+
+    #[cfg(feature = "std")]
+    proptest! {
+        #[test]
+        fn serde_cycle_std(num_frames in 0..2048u32) {
+            test_serde_cycle_std(Format::Head, num_frames);
+            test_serde_cycle_std(Format::Foot, num_frames);
+        }
+    }
+
+    // Test with varying number of frames. More frames slow down tests, the used range should
+    // cover all edge cases.
     proptest! {
         #[test]
         fn serialize(num_frames in 0..2048u32, buf_len in 1..64usize) {

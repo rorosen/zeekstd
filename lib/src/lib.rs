@@ -72,6 +72,13 @@
 //! [specification]: https://github.com/rorosen/zeekstd/blob/main/seekable_format.md
 //! [zstd_safe]: https://docs.rs/zstd-safe/latest/zstd_safe/
 
+#![no_std]
+
+extern crate alloc;
+
+#[cfg(feature = "std")]
+extern crate std;
+
 mod decode;
 mod encode;
 mod error;
@@ -79,8 +86,10 @@ pub mod seek_table;
 mod seekable;
 
 pub use decode::{DecodeOptions, Decoder};
+#[cfg(feature = "std")]
+pub use encode::Encoder;
 pub use encode::{
-    CompressionProgress, EncodeOptions, Encoder, EpilogueProgress, FrameSizePolicy, RawEncoder,
+    CompressionProgress, EncodeOptions, EpilogueProgress, FrameSizePolicy, RawEncoder,
 };
 pub use error::{Error, Result};
 pub use seek_table::SeekTable;
@@ -107,49 +116,202 @@ pub struct ReadmeDoctests;
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        io::{self, Cursor, Write},
-        path::PathBuf,
-    };
+    use alloc::vec;
+    use alloc::vec::Vec;
 
     use proptest::prelude::*;
-    use zstd_safe::DCtx;
 
     use crate::seek_table::Format;
 
     use super::*;
 
-    pub const LINE_LEN: u32 = 23;
-    pub const LINES_IN_DOC: u32 = 200_384;
-
-    pub fn test_input() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/kaestner.txt")
-    }
+    pub const INPUT: &str = include_str!("./lib.rs");
 
     fn test_cycle(frame_size_policy: Option<FrameSizePolicy>) {
-        let input = fs::read(test_input()).unwrap();
-        let mut seekable = Cursor::new(vec![]);
+        let mut seekable = vec![];
         let mut opts = EncodeOptions::new();
+
         if let Some(policy) = frame_size_policy {
             opts = opts.frame_size_policy(policy);
         }
+        let mut encoder = opts.into_raw_encoder().unwrap();
 
-        let mut encoder = opts.into_encoder(&mut seekable).unwrap();
+        // Make buf small enough to compress/end frame/write seek table/decompress in multiple
+        // steps
+        let mut buf = vec![0; INPUT.len() / 500];
 
-        // Compress the input in multiple steps
-        encoder.compress(&input[..input.len() / 2]).unwrap();
-        encoder.compress(&input[input.len() / 2..]).unwrap();
+        let mut in_progress = 0;
+        while in_progress < INPUT.len() {
+            let progress = encoder
+                .compress(&INPUT.as_bytes()[in_progress..], &mut buf)
+                .unwrap();
+            seekable.extend(&buf[..progress.output]);
+            in_progress += progress.input;
+        }
 
-        let n = encoder.finish().unwrap();
-        assert_eq!(n, seekable.position());
+        loop {
+            let prog = encoder.end_frame(&mut buf).unwrap();
+            seekable.extend(&buf[..prog.output]);
+            if prog.left == 0 {
+                break;
+            }
+        }
 
-        let mut decoder = DecodeOptions::new(seekable).into_decoder().unwrap();
-        let mut output = Cursor::new(Vec::with_capacity((LINE_LEN * LINES_IN_DOC) as usize));
-        // Decompress the complete seekable
-        io::copy(&mut decoder, &mut output).unwrap();
+        let mut ser = encoder.into_seek_table().into_serializer();
+        loop {
+            let n = ser.write_into(&mut buf);
+            if n == 0 {
+                break;
+            }
+            seekable.extend(&buf[..n]);
+        }
 
-        assert_eq!(&input, output.get_ref());
+        let wrapper = BytesWrapper::new(&seekable);
+        let mut decoder = Decoder::new(wrapper).unwrap();
+        let mut output = Vec::with_capacity(INPUT.len());
+
+        loop {
+            let n = decoder.decompress(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            output.extend(&buf[..n]);
+        }
+
+        assert_eq!(&INPUT.as_bytes(), &output);
+    }
+
+    fn test_cycle_stand_alone_seek_table(
+        frame_size_policy: Option<FrameSizePolicy>,
+        format: Format,
+    ) {
+        let mut seekable = vec![];
+        let mut opts = EncodeOptions::new();
+
+        if let Some(policy) = frame_size_policy {
+            opts = opts.frame_size_policy(policy);
+        }
+        let mut encoder = opts.into_raw_encoder().unwrap();
+
+        // Make buf small enough to compress/end frame/write seek table/decompress in multiple
+        // steps
+        let mut buf = vec![0; INPUT.len() / 500];
+
+        let mut in_progress = 0;
+        while in_progress < INPUT.len() {
+            let progress = encoder
+                .compress(&INPUT.as_bytes()[in_progress..], &mut buf)
+                .unwrap();
+            seekable.extend(&buf[..progress.output]);
+            in_progress += progress.input;
+        }
+
+        loop {
+            let prog = encoder.end_frame(&mut buf).unwrap();
+            seekable.extend(&buf[..prog.output]);
+            if prog.left == 0 {
+                break;
+            }
+        }
+
+        let mut ser = encoder.into_seek_table().into_format_serializer(format);
+        let mut seek_table = Vec::with_capacity(ser.encoded_len());
+        loop {
+            let n = ser.write_into(&mut buf);
+            if n == 0 {
+                break;
+            }
+            seek_table.extend(&buf[..n]);
+        }
+
+        assert_eq!(seek_table.len(), ser.encoded_len());
+
+        let mut seek_table_wrapper = BytesWrapper::new(&seek_table);
+        let seek_table = SeekTable::from_bytes(&seek_table).unwrap();
+        assert_eq!(
+            seek_table,
+            SeekTable::from_seekable_format(&mut seek_table_wrapper, format).unwrap()
+        );
+
+        let wrapper = BytesWrapper::new(&seekable);
+        let mut decoder = DecodeOptions::new(wrapper)
+            .seek_table(seek_table)
+            .into_decoder()
+            .unwrap();
+        let mut output = Vec::with_capacity(INPUT.len());
+
+        loop {
+            let n = decoder.decompress(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            output.extend(&buf[..n]);
+        }
+
+        assert_eq!(&INPUT.as_bytes(), &output);
+    }
+
+    fn test_patch_cycle(frame_size_policy: Option<FrameSizePolicy>) {
+        let old = INPUT;
+        let new = alloc::format!("{INPUT}\nThe End");
+        let mut patch = vec![];
+        let mut opts = EncodeOptions::new();
+
+        if let Some(policy) = frame_size_policy {
+            opts = opts.frame_size_policy(policy);
+        }
+        let mut encoder = opts.into_raw_encoder().unwrap();
+
+        // Make buf small enough to compress/end frame/write seek table/decompress in multiple
+        // steps
+        let mut buf = vec![0; INPUT.len() / 500];
+
+        // Create a binary patch
+        let mut in_progress = 0;
+        while in_progress < new.len() {
+            let progress = encoder
+                .compress_with_prefix(
+                    &new.as_bytes()[in_progress..],
+                    &mut buf,
+                    Some(old.as_bytes()),
+                )
+                .unwrap();
+            patch.extend(&buf[..progress.output]);
+            in_progress += progress.input;
+        }
+
+        loop {
+            let prog = encoder.end_frame(&mut buf).unwrap();
+            patch.extend(&buf[..prog.output]);
+            if prog.left == 0 {
+                break;
+            }
+        }
+
+        let mut ser = encoder.into_seek_table().into_serializer();
+        loop {
+            let n = ser.write_into(&mut buf);
+            if n == 0 {
+                break;
+            }
+            patch.extend(&buf[..n]);
+        }
+
+        let wrapper = BytesWrapper::new(&patch);
+        let mut decoder = Decoder::new(wrapper).unwrap();
+        let mut output: Vec<u8> = Vec::with_capacity(new.len());
+
+        loop {
+            let n = decoder
+                .decompress_with_prefix(&mut buf, Some(old.as_bytes()))
+                .unwrap();
+            if n == 0 {
+                break;
+            }
+            output.extend(&buf[..n]);
+        }
+
+        assert_eq!(new.as_bytes(), &output);
     }
 
     #[test]
@@ -157,93 +319,50 @@ mod tests {
         test_cycle(None);
     }
 
+    #[test]
+    fn patch_cycle() {
+        test_patch_cycle(None);
+    }
+
+    #[test]
+    fn cycle_stand_alone_seek_table_head() {
+        test_cycle_stand_alone_seek_table(None, Format::Head);
+    }
+
+    #[test]
+    fn cycle_stand_alone_seek_table_foot() {
+        test_cycle_stand_alone_seek_table(None, Format::Foot);
+    }
+
     proptest! {
         #[test]
-        fn cycle_custom_compressed_frame_size(frame_size in 1..256u32) {
+        fn cycle_custom_compressed_frame_size(frame_size in 1..1024u32) {
             test_cycle(Some(FrameSizePolicy::Compressed(frame_size)));
         }
 
         #[test]
-        fn cycle_custom_decompressed_frame_size(frame_size in 1..512u32) {
+        fn cycle_custom_decompressed_frame_size(frame_size in 1..1024u32) {
             test_cycle(Some(FrameSizePolicy::Uncompressed(frame_size)));
         }
-    }
 
-    #[test]
-    fn patch_cycle() {
-        let old = fs::read(test_input()).unwrap();
-        let mut new = fs::read(test_input()).unwrap();
-        new.extend_from_slice(b"The End");
-        let mut patch = Cursor::new(vec![]);
-
-        let mut encoder = Encoder::new(&mut patch).unwrap();
-        // Create a binary patch
-        let mut input_progress = 0;
-        loop {
-            let n = encoder
-                .compress_with_prefix(&new[input_progress..], Some(&old))
-                .unwrap();
-            if n == 0 {
-                break;
-            }
-            input_progress += n;
-        }
-        let n = encoder.finish().unwrap();
-        assert_eq!(n, patch.position());
-
-        let mut decoder = Decoder::new(patch).unwrap();
-        let mut output = vec![];
-        let mut buf = vec![0; DCtx::out_size()];
-        let mut buf_pos = 0;
-
-        // Apply the binary patch
-        loop {
-            let n = decoder
-                .decompress_with_prefix(&mut buf[buf_pos..], Some(&old))
-                .unwrap();
-            if n == 0 {
-                break;
-            }
-            buf_pos += n;
-            if buf_pos == buf.len() {
-                output.extend_from_slice(&buf);
-                buf_pos = 0;
-            }
+        #[test]
+        fn cycle_stand_alone_seek_table_foot_custom_compressed_frame_size(frame_size in 1..1024u32) {
+            test_cycle_stand_alone_seek_table(Some(FrameSizePolicy::Compressed(frame_size)), Format::Head);
         }
 
-        output.extend_from_slice(&buf[..buf_pos]);
-        assert_eq!(new, output);
-    }
+        #[test]
+        fn cycle_stand_alone_seek_table_foot_custom_decompressed_frame_size(frame_size in 1..1024u32) {
+            test_cycle_stand_alone_seek_table(Some(FrameSizePolicy::Uncompressed(frame_size)), Format::Foot);
+        }
 
-    #[test]
-    fn cycle_with_stand_alone_seek_table() {
-        let input = fs::read(test_input()).unwrap();
-        let mut seekable = Cursor::new(vec![]);
-        let mut encoder = Encoder::new(&mut seekable).unwrap();
+        #[test]
+        fn patch_cycle_custom_compressed_frame_size(frame_size in 1..1024u32) {
+            test_patch_cycle(Some(FrameSizePolicy::Compressed(frame_size)));
+        }
 
-        encoder.compress(&input).unwrap();
-        encoder.end_frame().unwrap();
-        encoder.flush().unwrap();
-
-        let written_compressed = encoder.written_compressed();
-        let mut st_ser = encoder
-            .into_seek_table()
-            .into_format_serializer(Format::Head);
-        let mut st_reader = Cursor::new(vec![]);
-        io::copy(&mut st_ser, &mut st_reader).unwrap();
-
-        assert_eq!(written_compressed, seekable.position());
-        st_reader.set_position(0);
-
-        let seek_table = SeekTable::from_reader(&mut st_reader).unwrap();
-        let mut decoder = DecodeOptions::new(seekable)
-            .seek_table(seek_table)
-            .into_decoder()
-            .unwrap();
-
-        let mut output = vec![0; input.len()];
-        decoder.decompress(&mut output).unwrap();
-
-        assert_eq!(&input, &output);
+        #[test]
+        fn patch_cycle_custom_decompressed_frame_size(frame_size in 1..1024u32) {
+            test_patch_cycle(Some(FrameSizePolicy::Uncompressed(frame_size)));
+        }
     }
 }
