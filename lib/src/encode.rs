@@ -1,9 +1,14 @@
+use alloc::vec;
+#[cfg(feature = "std")]
+use alloc::vec::Vec;
 use zstd_safe::{
     CCtx, CParameter, CompressionLevel, InBuffer, OutBuffer, ResetDirective,
     zstd_sys::ZSTD_EndDirective,
 };
 
-use crate::{SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result, seek_table::Format};
+#[cfg(feature = "std")]
+use crate::seek_table::Format;
+use crate::{SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result};
 
 // Constant value always can be casted
 const MAX_FRAME_SIZE: u32 = SEEKABLE_MAX_FRAME_SIZE as u32;
@@ -173,6 +178,7 @@ impl<'a> EncodeOptions<'a> {
     ///     .into_encoder(output)
     ///     .unwrap();
     /// ```
+    #[cfg(feature = "std")]
     pub fn into_encoder<W>(self, writer: W) -> Result<Encoder<'a, W>> {
         Encoder::with_opts(writer, self)
     }
@@ -418,6 +424,7 @@ impl RawEncoder<'_> {
 }
 
 /// A single-use seekable encoder.
+#[cfg(feature = "std")]
 pub struct Encoder<'a, W> {
     raw: RawEncoder<'a>,
     out_buf: Vec<u8>,
@@ -426,6 +433,7 @@ pub struct Encoder<'a, W> {
     written_compressed: u64,
 }
 
+#[cfg(feature = "std")]
 impl<'a, W> Encoder<'a, W> {
     /// Creates a new `Encoder` with default parameters.
     ///
@@ -459,6 +467,7 @@ impl<'a, W> Encoder<'a, W> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<'a, W: std::io::Write> Encoder<'a, W> {
     /// Consumes and compresses input data from `buf`.
     ///
@@ -501,6 +510,7 @@ impl<'a, W: std::io::Write> Encoder<'a, W> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<W: std::io::Write> Encoder<'_, W> {
     /// Consumes and compresses input data from `buf`.
     ///
@@ -629,6 +639,7 @@ impl<W: std::io::Write> Encoder<'_, W> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<W: std::io::Write> std::io::Write for Encoder<'_, W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.compress(buf).map_err(std::io::Error::other)
@@ -642,12 +653,7 @@ impl<W: std::io::Write> std::io::Write for Encoder<'_, W> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        io::{Cursor, Write},
-    };
-
-    use crate::tests::test_input;
+    use crate::tests::INPUT;
 
     use super::*;
 
@@ -676,25 +682,38 @@ mod tests {
 
     #[test]
     fn checksum() {
-        let input = fs::read(test_input()).unwrap();
-        let mut seekable = Cursor::new(vec![]);
+        let mut seekable = vec![];
         let mut encoder = EncodeOptions::new()
             .checksum_flag(true)
-            .frame_size_policy(FrameSizePolicy::Uncompressed(input.len() as u32 / 3))
-            .into_encoder(&mut seekable)
+            .frame_size_policy(FrameSizePolicy::Uncompressed(INPUT.len() as u32 / 3))
+            .into_raw_encoder()
             .unwrap();
 
-        encoder.compress(&input).unwrap();
-        encoder.end_frame().unwrap();
-        encoder.flush().unwrap();
-        // Additional frame for remaining data
-        assert_eq!(encoder.seek_table().num_frames(), 4);
-        let st = encoder.into_seek_table();
+        let mut buf = vec![0; INPUT.len()];
 
-        for i in 0usize..4 {
-            let start_pos = st.frame_start_comp(i as u32).unwrap();
-            // Get the Frame_Header_Descriptor
-            let descriptor = seekable.get_ref()[start_pos as usize + 4];
+        let mut in_progress = 0;
+        while in_progress < INPUT.len() {
+            let progress = encoder
+                .compress(&INPUT.as_bytes()[in_progress..], &mut buf)
+                .unwrap();
+            seekable.extend(&buf[..progress.output]);
+            in_progress += progress.input;
+        }
+
+        loop {
+            let prog = encoder.end_frame(&mut buf).unwrap();
+            seekable.extend(&buf[..prog.output]);
+            if prog.left == 0 {
+                break;
+            }
+        }
+
+        let num_frames = encoder.seek_table().num_frames();
+        let st = encoder.into_seek_table();
+        for i in 0..num_frames {
+            let start_pos = st.frame_start_comp(i).unwrap();
+            // Get the Frame_Header_Descriptor field
+            let descriptor: u8 = seekable[start_pos as usize + 4];
             // Check that the Content_Checksum_flag is set
             assert!(descriptor & 0x4 > 0);
         }

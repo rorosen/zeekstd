@@ -1,3 +1,5 @@
+use alloc::vec;
+use alloc::vec::Vec;
 use zstd_safe::{DCtx, InBuffer, OutBuffer, ResetDirective};
 
 use crate::{
@@ -417,12 +419,14 @@ impl<S: Seekable> Decoder<'_, S> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<S: Seekable> std::io::Read for Decoder<'_, S> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.decompress(buf).map_err(std::io::Error::other)
     }
 }
 
+#[cfg(feature = "std")]
 impl<S: Seekable> std::io::Seek for Decoder<'_, S> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         use std::io::{self, SeekFrom};
@@ -461,36 +465,59 @@ impl<S: Seekable> std::io::Seek for Decoder<'_, S> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        io::{Cursor, Read, Seek, SeekFrom},
-    };
-
-    use crate::{EncodeOptions, FrameSizePolicy, tests::test_input};
+    use crate::{BytesWrapper, EncodeOptions, FrameSizePolicy, tests::INPUT};
 
     use super::*;
 
-    fn new_seekable(input: &[u8], frame_size_policy: Option<FrameSizePolicy>) -> Cursor<Vec<u8>> {
-        let mut seekable = Cursor::new(vec![]);
+    fn new_seekable(frame_size_policy: Option<FrameSizePolicy>) -> Vec<u8> {
+        let mut seekable = vec![];
         let mut encoder = EncodeOptions::new()
             .frame_size_policy(frame_size_policy.unwrap_or_default())
-            .into_encoder(&mut seekable)
+            .into_raw_encoder()
             .unwrap();
 
-        // Compress the input
-        let n = encoder.compress(input).unwrap();
-        assert_eq!(n, input.len());
-        let n = encoder.finish().unwrap();
-        assert_eq!(n, seekable.position());
+        let mut buf = vec![0; INPUT.len()];
+
+        let mut in_progress = 0;
+        let mut out_progress = 0;
+        while in_progress < INPUT.len() {
+            let progress = encoder
+                .compress(&INPUT.as_bytes()[in_progress..], &mut buf)
+                .unwrap();
+            seekable.extend(&buf[..progress.output]);
+            in_progress += progress.input;
+            out_progress += progress.output;
+        }
+        assert_eq!(in_progress, INPUT.len());
+
+        loop {
+            let prog = encoder.end_frame(&mut buf).unwrap();
+            seekable.extend(&buf[..prog.output]);
+            out_progress += prog.output;
+            if prog.left == 0 {
+                break;
+            }
+        }
+        assert_eq!(out_progress, seekable.len());
+
+        let mut ser = encoder.into_seek_table().into_serializer();
+        loop {
+            let n = ser.write_into(&mut buf);
+            if n == 0 {
+                break;
+            }
+            seekable.extend(&buf[..n]);
+        }
+        assert_eq!(out_progress + ser.encoded_len(), seekable.len());
 
         seekable
     }
 
     #[test]
     fn options() {
-        let input = fs::read(test_input()).unwrap();
-        let seekable = new_seekable(&input, None);
-        let st = SeekTable::from_seekable(&mut seekable.clone()).unwrap();
+        let seekable = new_seekable(None);
+        let mut seekable = BytesWrapper::new(&seekable);
+        let st = SeekTable::from_seekable(&mut seekable).unwrap();
 
         let oks = [
             DecodeOptions::new(seekable.clone()),
@@ -498,11 +525,11 @@ mod tests {
             DecodeOptions::new(seekable.clone()).upper_frame(st.num_frames() - 1),
             DecodeOptions::new(seekable.clone()).offset(st.size_decomp()),
             DecodeOptions::new(seekable.clone()).offset_limit(st.size_decomp()),
-            DecodeOptions::new(Cursor::new(vec![128, 0])).seek_table(st.clone()),
+            DecodeOptions::new(BytesWrapper::new(&[0, 128])).seek_table(st.clone()),
         ];
 
         let errs = [
-            DecodeOptions::new(Cursor::new(vec![128, 0])),
+            DecodeOptions::new(BytesWrapper::new(&[0, 128])),
             DecodeOptions::new(seekable.clone()).lower_frame(st.num_frames()),
             DecodeOptions::new(seekable.clone()).upper_frame(st.num_frames()),
             DecodeOptions::new(seekable.clone()).offset(st.size_decomp() + 1),
@@ -520,15 +547,14 @@ mod tests {
 
     #[test]
     fn decompress_and_reset() {
-        let input = fs::read(test_input()).unwrap();
-        let seekable = new_seekable(&input, None);
-        let mut decoder = Decoder::new(seekable).unwrap();
+        let seekable = new_seekable(None);
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
 
-        let mut output = vec![0; input.len()];
+        let mut output = vec![0; INPUT.len()];
         let n = decoder.decompress(&mut output).unwrap();
 
         assert_eq!(n, output.len());
-        assert_eq!(input, output);
+        assert_eq!(INPUT.as_bytes(), output);
 
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(n, 0);
@@ -537,18 +563,14 @@ mod tests {
         let n = decoder.decompress(&mut output).unwrap();
 
         assert_eq!(n, output.len());
-        assert_eq!(input, output);
+        assert_eq!(INPUT.as_bytes(), output);
     }
 
     #[test]
     fn decompress_until_upper_frame() {
-        let input = fs::read(test_input()).unwrap();
-        let frame_size = input.len() / 7;
-        let seekable = new_seekable(
-            &input,
-            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
-        );
-        let mut decoder = Decoder::new(seekable).unwrap();
+        let frame_size = INPUT.len() / 7;
+        let seekable = new_seekable(Some(FrameSizePolicy::Uncompressed(frame_size as u32)));
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
 
         // Decompress until frame 5 (inclusive)
         decoder.set_lower_frame(0).unwrap();
@@ -558,80 +580,70 @@ mod tests {
         let mut output = vec![0; len];
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(n, len);
-        assert_eq!(&input[..n], &output);
+        assert_eq!(&INPUT.as_bytes()[..n], &output);
     }
 
     #[test]
     fn decompress_last_frames() {
-        let input = fs::read(test_input()).unwrap();
-        let frame_size = input.len() / 9;
-        let seekable = new_seekable(
-            &input,
-            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
-        );
-        let mut decoder = Decoder::new(seekable).unwrap();
+        let frame_size = INPUT.len() / 9;
+        let seekable = new_seekable(Some(FrameSizePolicy::Uncompressed(frame_size as u32)));
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
 
         // Decompress the last 4 frames
         decoder.set_lower_frame(5).unwrap();
         decoder.set_upper_frame(9).unwrap();
 
-        let len = input.len() - frame_size * 5;
+        let len = INPUT.len() - frame_size * 5;
         let mut output = vec![0; len];
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(n, len);
-        assert_eq!(&input[input.len() - n..], &output);
+        assert_eq!(&INPUT.as_bytes()[INPUT.len() - n..], &output);
     }
 
     #[test]
     fn upper_frame_greater_than_lower_frame() {
-        let input = fs::read(test_input()).unwrap();
-        let frame_size = input.len() / 13;
-        let seekable = new_seekable(
-            &input,
-            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
-        );
-        let mut decoder = Decoder::new(seekable).unwrap();
+        let frame_size = INPUT.len() / 13;
+        let seekable = new_seekable(Some(FrameSizePolicy::Uncompressed(frame_size as u32)));
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
 
         // Lower frame greater than upper frame, expect zero bytes read
         decoder.set_lower_frame(9).unwrap();
         decoder.set_upper_frame(8).unwrap();
-        let mut output = vec![0; input.len()];
+        let mut output = vec![0; INPUT.len()];
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(0, n);
     }
 
     #[test]
     fn reset_decompression() {
-        let input = fs::read(test_input()).unwrap();
-        let seekable = new_seekable(&input, None);
-        let mut decoder = Decoder::new(seekable).unwrap();
+        let seekable = new_seekable(None);
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
 
         // Dummy decompression so we can reset something
         decoder.decompress(&mut [0; 128]).unwrap();
         decoder.reset();
-        let mut output = vec![0; input.len()];
+        let mut output = vec![0; INPUT.len()];
         let n = decoder.decompress(&mut output).unwrap();
-        assert_eq!(n, input.len());
-        assert_eq!(input, output);
+        assert_eq!(n, INPUT.len());
+        assert_eq!(INPUT.as_bytes(), output);
     }
 
     #[test]
     fn decompress_everything_after_partly_decompression() {
-        let input = fs::read(test_input()).unwrap();
-        let frame_size = input.len() / 32;
-        let seekable = new_seekable(
-            &input,
-            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
-        );
-        let mut decoder = Decoder::new(seekable).unwrap();
+        let frame_size = INPUT.len() / 32;
+        let seekable = new_seekable(Some(FrameSizePolicy::Uncompressed(frame_size as u32)));
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
 
         decoder.set_lower_frame(23).unwrap();
         decoder.set_upper_frame(29).unwrap();
 
-        let mut output = vec![0; input.len()];
+        let mut output = vec![0; INPUT.len()];
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(n, frame_size * 30 - frame_size * 23);
-        assert_eq!(input[frame_size * 23..frame_size * 30], output[..n]);
+        assert_eq!(
+            INPUT.as_bytes()[frame_size * 23..frame_size * 30],
+            output[..n]
+        );
 
         // Decompress all frames
         decoder.set_lower_frame(0).unwrap();
@@ -639,15 +651,14 @@ mod tests {
             .set_upper_frame(decoder.seek_table().num_frames() - 1)
             .unwrap();
         let n = decoder.decompress(&mut output).unwrap();
-        assert_eq!(n, input.len());
-        assert_eq!(input, output);
+        assert_eq!(n, INPUT.len());
+        assert_eq!(INPUT.as_bytes(), output);
     }
 
     #[test]
     fn set_frame_boundaries() {
-        let input = fs::read(test_input()).unwrap();
-        let seekable = new_seekable(&input, None);
-        let mut decoder = Decoder::new(seekable).unwrap();
+        let seekable = new_seekable(None);
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
         let num_frames = decoder.seek_table().num_frames();
 
         assert!(decoder.set_lower_frame(num_frames - 1).is_ok());
@@ -670,9 +681,8 @@ mod tests {
 
     #[test]
     fn set_offset_boundaries() {
-        let input = fs::read(test_input()).unwrap();
-        let seekable = new_seekable(&input, None);
-        let mut decoder = Decoder::new(seekable).unwrap();
+        let seekable = new_seekable(None);
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
 
         let mut offset = decoder.seek_table().size_decomp();
         assert!(decoder.set_offset(offset).is_ok());
@@ -695,29 +705,25 @@ mod tests {
 
     #[test]
     fn decompress_within_offset_boundaries() {
-        let input = fs::read(test_input()).unwrap();
-        let frame_size = input.len() / 34;
-        let seekable = new_seekable(
-            &input,
-            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
-        );
-        let mut decoder = Decoder::new(seekable).unwrap();
+        let frame_size = INPUT.len() / 34;
+        let seekable = new_seekable(Some(FrameSizePolicy::Uncompressed(frame_size as u32)));
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
 
-        let offset = input.len() / 3;
+        let offset = INPUT.len() / 3;
         let offset_limit = 2 * offset;
         decoder.set_offset(offset as u64).unwrap();
         decoder.set_offset_limit(offset_limit as u64).unwrap();
 
-        let mut output = vec![0; input.len()];
+        let mut output = vec![0; INPUT.len()];
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(n, offset_limit - offset);
-        assert_eq!(input[offset..offset_limit], output[..n]);
+        assert_eq!(INPUT.as_bytes()[offset..offset_limit], output[..n]);
 
         // Limit stays unchanged
         decoder.set_offset(3).unwrap();
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(n, offset_limit - 3);
-        assert_eq!(input[3..offset_limit], output[..n]);
+        assert_eq!(INPUT.as_bytes()[3..offset_limit], output[..n]);
 
         // Reset unsets offset and limit
         decoder.reset();
@@ -725,20 +731,19 @@ mod tests {
         assert_eq!(decoder.offset_limit(), decoder.seek_table().size_decomp());
         assert_eq!(decoder.read_compressed(), 0);
         let n = decoder.decompress(&mut output).unwrap();
-        assert_eq!(n, input.len());
-        assert_eq!(input, output);
+        assert_eq!(n, INPUT.len());
+        assert_eq!(INPUT.as_bytes(), output);
     }
 
+    #[cfg(feature = "std")]
     #[test]
     #[allow(clippy::cast_sign_loss)]
     fn seek_decoder() {
-        let input = fs::read(test_input()).unwrap();
-        let frame_size = input.len() / 52;
-        let seekable = new_seekable(
-            &input,
-            Some(FrameSizePolicy::Uncompressed(frame_size as u32)),
-        );
-        let mut decoder = Decoder::new(seekable).unwrap();
+        use std::io::{Seek, SeekFrom};
+
+        let frame_size = INPUT.len() / 52;
+        let seekable = new_seekable(Some(FrameSizePolicy::Uncompressed(frame_size as u32)));
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
 
         // Set the offset limit to make sure it isn't changed by seeking
         let seek_pos = frame_size * 13;
@@ -748,23 +753,27 @@ mod tests {
         // Seek from start
         decoder.seek(SeekFrom::Start(seek_pos as u64)).unwrap();
         assert_eq!(decoder.offset(), seek_pos as u64);
-        let mut output = vec![0; input.len()];
+        let mut output = vec![0; INPUT.len()];
         let n = decoder.decompress(&mut output).unwrap();
+        assert_ne!(decoder.read_compressed(), 0);
         assert_eq!(n, end - seek_pos);
-        assert_eq!(input[seek_pos..end], output[..n]);
+        assert_eq!(INPUT.as_bytes()[seek_pos..end], output[..n]);
         // Reading moves offset accordingly
         assert_eq!(decoder.offset(), end as u64);
 
-        // Seek from end
-        let seek_pos = -123;
-        let start = (input.len() as i64 + seek_pos) as usize;
+        // Seek from end (needs to be more than one frame)
+        let seek_pos = -((2 * frame_size) as i64);
+        let start = (INPUT.len() as i64 + seek_pos) as usize;
         assert_ne!(decoder.read_compressed(), 0);
         decoder.seek(SeekFrom::End(seek_pos)).unwrap();
-        assert_eq!(decoder.offset(), input.len() as u64 - 123);
+        assert_eq!(
+            decoder.offset(),
+            (INPUT.len() as u64).wrapping_add_signed(seek_pos)
+        );
         assert_eq!(decoder.read_compressed(), 0);
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(n, end - start);
-        assert_eq!(input[start..end], output[..n]);
+        assert_eq!(INPUT.as_bytes()[start..end], output[..n]);
 
         // Positive seek from current
         decoder.seek(SeekFrom::Start(69)).unwrap();
@@ -772,7 +781,7 @@ mod tests {
         assert_eq!(decoder.offset(), 79);
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(n, end - 79);
-        assert_eq!(input[79..end], output[..n]);
+        assert_eq!(INPUT.as_bytes()[79..end], output[..n]);
 
         // Negative seek from current
         decoder.seek(SeekFrom::Start(69)).unwrap();
@@ -780,14 +789,16 @@ mod tests {
         assert_eq!(decoder.offset(), 59);
         let n = decoder.decompress(&mut output).unwrap();
         assert_eq!(n, end - 59);
-        assert_eq!(input[59..end], output[..n]);
+        assert_eq!(INPUT.as_bytes()[59..end], output[..n]);
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn set_offset_within_frame_continues_decompression() {
-        let input = fs::read(test_input()).unwrap();
-        let seekable = new_seekable(&input, Some(FrameSizePolicy::Uncompressed(100)));
-        let mut decoder = Decoder::new(seekable).unwrap();
+        use std::io::Read;
+
+        let seekable = new_seekable(Some(FrameSizePolicy::Uncompressed(100)));
+        let mut decoder = Decoder::new(BytesWrapper::new(&seekable)).unwrap();
         assert_eq!(decoder.read_compressed(), 0);
 
         decoder.set_offset(10).unwrap();
@@ -798,17 +809,17 @@ mod tests {
         decoder.set_offset(30).unwrap();
         assert_eq!(decoder.offset(), 30);
         assert_ne!(decoder.read_compressed(), 0);
-        let mut output = vec![0; input.len()];
+        let mut output = vec![0; INPUT.len()];
         let n = decoder.decompress(&mut output).unwrap();
-        assert_eq!(n, input.len() - 30);
-        assert_eq!(input[30..], output[..n]);
+        assert_eq!(n, INPUT.len() - 30);
+        assert_eq!(INPUT.as_bytes()[30..], output[..n]);
 
         // Reset when offset is in another frame
         decoder.set_offset(101).unwrap();
         assert_eq!(decoder.offset(), 101);
         assert_eq!(decoder.read_compressed(), 0);
         let n = decoder.decompress(&mut output).unwrap();
-        assert_eq!(n, input.len() - 101);
-        assert_eq!(input[101..], output[..n]);
+        assert_eq!(n, INPUT.len() - 101);
+        assert_eq!(INPUT.as_bytes()[101..], output[..n]);
     }
 }

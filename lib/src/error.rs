@@ -1,7 +1,8 @@
+use alloc::boxed::Box;
 use zstd_safe::{ErrorCode, get_error_name, zstd_sys::ZSTD_ErrorCode};
 
 /// A `Result` alias where the `Err` case is `zeekstd::Error`.
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// The errors that may occur when working with this crate.
 #[derive(Debug)]
@@ -61,12 +62,13 @@ impl Error {
 }
 
 impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.kind {
             Kind::Other(err) => write!(f, "{err}"),
             Kind::NumberConversionFailed(err) => write!(f, "number conversion failed: {err}"),
             Kind::OffsetOutOfRange => f.write_str("offset out of range"),
             Kind::FrameIndexTooLarge => f.write_str("frame index too large"),
+            #[cfg(feature = "std")]
             Kind::IO(err) => write!(f, "io error: {err}"),
             Kind::Zstd(code) => f.write_str(get_error_name(*code)),
         }
@@ -83,6 +85,7 @@ impl From<core::num::TryFromIntError> for Error {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
         Self {
@@ -108,13 +111,14 @@ enum Kind {
     /// The passed frame index is too large.
     FrameIndexTooLarge,
     /// IO error.
+    #[cfg(feature = "std")]
     IO(std::io::Error),
     /// An error from the zstd library.
     Zstd(ErrorCode),
 }
 
 impl core::fmt::Debug for Kind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Other(arg0) => f.debug_tuple("Other").field(arg0).finish(),
             Self::NumberConversionFailed(arg0) => {
@@ -122,6 +126,7 @@ impl core::fmt::Debug for Kind {
             }
             Self::OffsetOutOfRange => write!(f, "OffsetOutOfRange"),
             Self::FrameIndexTooLarge => write!(f, "FrameIndexTooLarge"),
+            #[cfg(feature = "std")]
             Self::IO(arg0) => f.debug_tuple("IO").field(arg0).finish(),
             Self::Zstd(c) => write!(f, "{}; code {}", zstd_safe::get_error_name(*c), c),
         }
