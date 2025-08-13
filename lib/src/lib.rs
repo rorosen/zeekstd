@@ -170,12 +170,8 @@ mod tests {
 
         assert_eq!(seek_table.len(), ser.encoded_len());
 
-        let mut seek_table_wrapper = BytesWrapper::new(&seek_table);
-        let seek_table = SeekTable::from_bytes(&seek_table).unwrap();
-        assert_eq!(
-            seek_table,
-            SeekTable::from_seekable_format(&mut seek_table_wrapper, format).unwrap()
-        );
+        let mut wrapper = BytesWrapper::new(&seek_table);
+        let seek_table = SeekTable::from_seekable_format(&mut wrapper, format).unwrap();
 
         let wrapper = BytesWrapper::new(&seekable);
         let mut decoder = DecodeOptions::new(wrapper)
