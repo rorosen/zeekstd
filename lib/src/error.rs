@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use zstd_safe::{ErrorCode, get_error_name, zstd_sys::ZSTD_ErrorCode};
 
 /// A `Result` alias where the `Err` case is `zeekstd::Error`.
@@ -11,21 +10,6 @@ pub struct Error {
 }
 
 impl Error {
-    /// A custom error.
-    pub fn other<E>(err: E) -> Self
-    where
-        E: Into<Box<dyn core::error::Error + Send + Sync>>,
-    {
-        Self {
-            kind: Kind::Other(err.into()),
-        }
-    }
-
-    /// Returns true if the error cannot be categorized into any other kind.
-    pub fn is_other(&self) -> bool {
-        matches!(self.kind, Kind::Other(_))
-    }
-
     /// Returns true if the error origins from a failed number conversion.
     pub fn is_number_conversion_failed(&self) -> bool {
         matches!(self.kind, Kind::NumberConversionFailed(_))
@@ -76,7 +60,6 @@ impl Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.kind {
-            Kind::Other(err) => write!(f, "{err}"),
             Kind::NumberConversionFailed(err) => write!(f, "number conversion failed: {err}"),
             Kind::OffsetOutOfRange => f.write_str("offset out of range"),
             Kind::FrameIndexTooLarge => f.write_str("frame index too large"),
@@ -116,7 +99,6 @@ impl From<ErrorCode> for Error {
 }
 
 enum Kind {
-    Other(Box<dyn core::error::Error + Send + Sync>),
     /// Out of range integral type conversion attempted
     NumberConversionFailed(core::num::TryFromIntError),
     /// The desired offset is out of range.
@@ -133,7 +115,6 @@ enum Kind {
 impl core::fmt::Debug for Kind {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Other(arg0) => f.debug_tuple("Other").field(arg0).finish(),
             Self::NumberConversionFailed(arg0) => {
                 f.debug_tuple("NumberConversionFailed").field(arg0).finish()
             }
