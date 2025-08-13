@@ -19,9 +19,9 @@ rustPlatform.buildRustPackage {
   ];
 
   cargoLock.lockFile = ./Cargo.lock;
-  meta = with lib; {
+  meta = {
     homepage = "https://github.com/rorosen/zeekstd";
-    license = licenses.bsd2;
+    license = lib.licenses.bsd2;
     maintainers = with lib.maintainers; [ rorosen ];
     mainProgram = "zeekstd";
   };
