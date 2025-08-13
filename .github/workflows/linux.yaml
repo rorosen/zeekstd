@@ -11,7 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Test
-      run: cargo test --verbose
+    - name: Build lib
+      run: cargo build -p zeekstd --verbose
+    - name: Build lib no_std
+      run: cargo build -p zeekstd --verbose --no-default-features
+    - name: Build cli
+      run: cargo build -p zeekstd_cli --verbose
+    - name: Test lib
+      run: cargo test -p zeekstd --verbose
+    - name: Test lib no_std
+      run: cargo test -p zeekstd --verbose --no-default-features
+    - name: Test cli
+      run: cargo test -p zeekstd_cli --verbose
