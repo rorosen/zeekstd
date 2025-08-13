@@ -240,20 +240,25 @@ pub enum Format {
 
 /// Holds information of the frames of a seekable archive.
 ///
-/// The `SeekTable` allows decompressors to jump directly to the beginning of frames. It is
-/// typically placed in a Zstandard skippable frame at the end of a seekable archive.
+/// The `SeekTable` contains the frame boundaries of a seekable compressed file. It allows
+/// decompressors to efficiently jump to the frames that contain requested data.
 ///
-/// # Examples
+/// Seek tables can be serialized in two different [`Format`]s that control where the seek table
+/// integrity field is placed in the skippable seek table frame.
 ///
-/// ```no_run
-/// # use std::fs::File;
-/// # use zeekstd::SeekTable;
-/// let mut seekable = File::open("seekable.zst")?;
-/// let seek_table = SeekTable::from_seekable(&mut seekable)?;
+/// - [`Head`]: The seek table is placed at the beginning of the seek table frame. Suitable for
+///   stand-alone seek tables.
+/// - [`Foot`]: The seek table is placed at the end of the seek table frame. Suitable for seek
+///   tables that are appended to compressed data.
 ///
-/// let num_frames = seek_table.num_frames();
-/// # Ok::<(), zeekstd::Error>(())
-/// ```
+/// [`Encoder`] and [`RawEncoder`] both create a seek table while compressing data. The [`Decoder`]
+/// parses the seek table during intialization.
+///
+/// [`Encoder`]: crate::Encoder
+/// [`RawEncoder`]: crate::RawEncoder
+/// [`Decoder`]: crate::Decoder
+/// [`Foot`]: Format#variant.Foot
+/// [`Head`]: Format#variant.Head
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeekTable {
     entries: Entries,
@@ -476,6 +481,19 @@ impl SeekTable {
     /// # Errors
     ///
     /// Fails if [`Self::num_frames()`] reaches [`SEEKABLE_MAX_FRAMES`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(123, 456)?;
+    /// seek_table.log_frame(333, 444)?;
+    ///
+    /// assert_eq!(2, seek_table.num_frames());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn log_frame(&mut self, c_size: u32, d_size: u32) -> Result<()> {
         if self.num_frames() >= SEEKABLE_MAX_FRAMES {
             return Err(Error::frame_index_too_large());
@@ -491,17 +509,57 @@ impl SeekTable {
     }
 
     /// The number of frames in the seek table.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(123, 456)?;
+    ///
+    /// assert_eq!(1, seek_table.num_frames());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn num_frames(&self) -> u32 {
         // Cast is always possible (max value SEEKABLE_MAX_FRAMES)
         (self.entries.0.len() - 1) as u32
     }
 
     /// The frame index at the given compressed offset.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(100, 200)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(0, seek_table.frame_index_comp(99));
+    /// assert_eq!(1, seek_table.frame_index_comp(101));
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn frame_index_comp(&self, offset: u64) -> u32 {
         self.frame_index_at(offset, |i| self.entries[i].c_offset)
     }
 
     /// The frame index at the given decompressed offset.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(100, 200)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(0, seek_table.frame_index_decomp(199));
+    /// assert_eq!(1, seek_table.frame_index_decomp(201));
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn frame_index_decomp(&self, offset: u64) -> u32 {
         self.frame_index_at(offset, |i| self.entries[i].d_offset)
     }
@@ -511,6 +569,22 @@ impl SeekTable {
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(100, 200)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(0, seek_table.frame_start_comp(0).unwrap());
+    /// assert_eq!(100, seek_table.frame_start_comp(1).unwrap());
+    ///
+    /// assert!(seek_table.frame_start_comp(2).unwrap_err().is_frame_index_too_large());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn frame_start_comp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
@@ -524,6 +598,22 @@ impl SeekTable {
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(100, 200)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(0, seek_table.frame_start_decomp(0).unwrap());
+    /// assert_eq!(200, seek_table.frame_start_decomp(1).unwrap());
+    ///
+    /// assert!(seek_table.frame_start_decomp(2).unwrap_err().is_frame_index_too_large());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn frame_start_decomp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
@@ -537,6 +627,22 @@ impl SeekTable {
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(100, 200)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(100, seek_table.frame_end_comp(0).unwrap());
+    /// assert_eq!(200, seek_table.frame_end_comp(1).unwrap());
+    ///
+    /// assert!(seek_table.frame_end_comp(2).unwrap_err().is_frame_index_too_large());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn frame_end_comp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
@@ -550,6 +656,22 @@ impl SeekTable {
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(100, 200)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(200, seek_table.frame_end_decomp(0).unwrap());
+    /// assert_eq!(400, seek_table.frame_end_decomp(1).unwrap());
+    ///
+    /// assert!(seek_table.frame_end_decomp(2).unwrap_err().is_frame_index_too_large());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn frame_end_decomp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
@@ -563,6 +685,22 @@ impl SeekTable {
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(100, 200)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(100, seek_table.frame_size_comp(0).unwrap());
+    /// assert_eq!(100, seek_table.frame_size_comp(1).unwrap());
+    ///
+    /// assert!(seek_table.frame_size_comp(2).unwrap_err().is_frame_index_too_large());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn frame_size_comp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
@@ -577,6 +715,22 @@ impl SeekTable {
     /// # Errors
     ///
     /// Fails if the frame index is out of range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(100, 200)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(200, seek_table.frame_size_decomp(0).unwrap());
+    /// assert_eq!(200, seek_table.frame_size_decomp(1).unwrap());
+    ///
+    /// assert!(seek_table.frame_size_decomp(2).unwrap_err().is_frame_index_too_large());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn frame_size_decomp(&self, index: u32) -> Result<u64> {
         if index >= self.num_frames() {
             return Err(Error::frame_index_too_large());
@@ -587,6 +741,19 @@ impl SeekTable {
     }
 
     /// The maximum compressed frame size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(150, 250)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(150, seek_table.max_frame_size_comp());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     #[allow(clippy::missing_panics_doc)]
     pub fn max_frame_size_comp(&self) -> u64 {
         (0..self.num_frames())
@@ -599,6 +766,19 @@ impl SeekTable {
     }
 
     /// The maximum decompressed frame size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(150, 250)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(250, seek_table.max_frame_size_decomp());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     #[allow(clippy::missing_panics_doc)]
     pub fn max_frame_size_decomp(&self) -> u64 {
         (0..self.num_frames())
@@ -613,6 +793,20 @@ impl SeekTable {
     /// The compressed size of the seekable archive.
     ///
     /// This is equivalent to calling [`Self::frame_end_comp`] with the index of the last frame.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(150, 250)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(250, seek_table.size_comp());
+    /// assert_eq!(250, seek_table.frame_end_comp(1).unwrap());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     #[allow(clippy::missing_panics_doc)]
     pub fn size_comp(&self) -> u64 {
         self.entries
@@ -625,6 +819,20 @@ impl SeekTable {
     /// The decompressed size of the seekable archive.
     ///
     /// This is equivalent to calling [`Self::frame_end_decomp`] with the index of the last frame.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(150, 250)?;
+    /// seek_table.log_frame(100, 200)?;
+    ///
+    /// assert_eq!(450, seek_table.size_decomp());
+    /// assert_eq!(450, seek_table.frame_end_decomp(1).unwrap());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     #[allow(clippy::missing_panics_doc)]
     pub fn size_decomp(&self) -> u64 {
         self.entries
@@ -634,20 +842,54 @@ impl SeekTable {
             .d_offset
     }
 
-    /// Convert this seek table into an immutable, serializable form.
+    /// Convert this seek table into a [`Serializer`].
     ///
-    /// The seek table will be serialized with the seekable integrity field placed as a
-    /// footer after any frame data. This is the typical seek table that can be appended to a
-    /// seekable archive, however, parses need to seek the input for deserialization.
+    /// The seek table is serialized in [`Foot`] format. It is not possible to add frames to the
+    /// `Serializer`.
+    ///
+    /// [`Foot`]: Format#variant.Foot
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::SeekTable;
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(123, 456)?;
+    ///
+    /// let mut serializer = seek_table.into_serializer();
+    /// let len = serializer.encoded_len();
+    /// let mut buf = vec![0; len];
+    ///
+    /// let n = serializer.write_into(&mut buf);
+    /// assert_eq!(n, len);
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn into_serializer(self) -> Serializer {
         self.into_format_serializer(Format::Foot)
     }
 
-    /// Convert this seek table into an immutable, serializable form.
+    /// Convert this seek table into a [`Serializer`] with the given `format`.
     ///
-    /// The seek table will be serialized with the seekable integrity field placed as a
-    /// header before any frame data. This is useful for creating a stand-alone seek table that
-    /// can be parsed in a streaming fashion, i.e. without seeking the input.
+    /// The seek table is serialized according to `format`. It is not possible to add frames to the
+    /// `Serializer`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zeekstd::seek_table::{SeekTable, Format};
+    ///
+    /// let mut seek_table = SeekTable::new();
+    /// seek_table.log_frame(123, 456)?;
+    ///
+    /// let mut serializer = seek_table.into_format_serializer(Format::Head);
+    /// let len = serializer.encoded_len();
+    /// let mut buf = vec![0; len];
+    ///
+    /// let n = serializer.write_into(&mut buf);
+    /// assert_eq!(n, len);
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn into_format_serializer(self, format: Format) -> Serializer {
         Serializer {
             frames: self.entries.into_frames(),
@@ -694,7 +936,6 @@ impl SeekTable {
 ///
 /// let n = ser.write_into(&mut buf);
 /// assert_eq!(n, ser.encoded_len());
-///
 /// # Ok::<(), zeekstd::Error>(())
 /// ```
 pub struct Serializer {
@@ -773,6 +1014,7 @@ impl Serializer {
     /// let n = ser.write_into(&mut second);
     /// assert_eq!(n, ser.encoded_len());
     ///
+    /// assert_eq!(first, second);
     /// # Ok::<(), zeekstd::Error>(())
     /// ```
     pub fn reset(&mut self) {
@@ -872,7 +1114,6 @@ mod tests {
 
         ser.reset();
 
-        // Multiple write calls with changing buffer sizes
         let mut buf = vec![0; buf_len];
         let mut pos = 0;
         while pos < ser.encoded_len() {
@@ -976,8 +1217,8 @@ mod tests {
         }
     }
 
-    // Test with varying number of frames. More frames slow down tests, the used range should
-    // cover all edge cases.
+    // Test with varying number of frames. More frames slow down tests, the used range covers all
+    // edge cases.
     proptest! {
         #[test]
         fn serialize(num_frames in 0..2048u32, buf_len in 1..64usize) {
