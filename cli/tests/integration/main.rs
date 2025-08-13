@@ -10,7 +10,7 @@ use tempfile::{NamedTempFile, TempDir};
 const FRAME_SIZES: [&str; 5] = ["10", "123", "3K", "2M", "1G"];
 
 fn test_input() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/kaestner.txt")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/kaestner.txt")
 }
 
 fn compress_test_input(out_path: &Path, frame_size: &str) {
