@@ -10,22 +10,6 @@ use crate::{
 };
 
 /// Options that configure how data is decompressed.
-///
-/// # Examples
-///
-/// Supports builder like chaining.
-///
-/// ```no_run
-/// use std::fs::File;
-/// use zeekstd::{DecodeOptions, FrameSizePolicy};
-///
-/// let mut seekable = File::open("seekable.zst")?;
-/// let decoder = DecodeOptions::new(&mut seekable)
-///     .lower_frame(2)
-///     .upper_frame(6)
-///     .into_decoder()?;
-/// # Ok::<(), zeekstd::Error>(())
-/// ```
 pub struct DecodeOptions<'a, S> {
     dctx: DCtx<'a>,
     src: S,
@@ -37,7 +21,8 @@ pub struct DecodeOptions<'a, S> {
 }
 
 impl<'a, S> DecodeOptions<'a, S> {
-    /// Creates a set of options with default initial values.
+    /// Creates a set of decoding options with default initial values. `src` contains the
+    /// compressed data.
     ///
     /// # Panics
     ///
