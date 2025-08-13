@@ -223,13 +223,17 @@ impl Parser {
 }
 
 /// The format that should be used when serializing or deserializing the seek table.
-///
-/// In `Head` format the seek table integrity field is placed directly after the skippable
-/// header, before any frame data, in the skippable seek table frame. In `Foot` format the
-/// integrity field is placed at the end of the skippable frame, after any frame data.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Format {
+    /// Suitable for stand-alone seek tables.
+    ///
+    /// In `Head` format, the seek table integrity field is placed directly after the skippable
+    /// header, i.e. before any frame data, in the seek table frame.
     Head,
+    /// Suitable for seek tables that are appended to compressed data.
+    ///
+    /// In `Foot` format, the integrity field is placed at the end of the seek table frame, after
+    /// any frame data.
     #[default]
     Foot,
 }
@@ -793,6 +797,7 @@ impl Serializer {
 }
 
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl std::io::Read for Serializer {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         Ok(self.write_into(buf))
@@ -929,6 +934,32 @@ mod tests {
         }
     }
 
+    fn test_deserialize_compatible_with_zstd_seekable(num_frames: u32) {
+        let mut fl = zstd_safe::seekable::FrameLog::create(true);
+
+        for i in 1..=num_frames {
+            fl.log_frame(i * 7, i * 13, Some(i)).unwrap();
+        }
+
+        // frame size of zstd seekable is 12,  c_size, d_size, checksum each 4
+        let cap = SKIPPABLE_HEADER_SIZE + (num_frames * 12) as usize + SEEK_TABLE_INTEGRITY_SIZE;
+        let mut buf = vec![0; cap];
+        let mut out_buf = OutBuffer::around(&mut buf);
+        let n = fl.write_seek_table(&mut out_buf).unwrap();
+        // Verify that the entire seek table got written
+        assert_eq!(n, 0);
+
+        let st = SeekTable::from_bytes(&buf).unwrap();
+        assert_eq!(st.num_frames(), num_frames);
+
+        for i in 1..=num_frames {
+            let c_size = i as u64 * 7;
+            let d_size = i as u64 * 13;
+            assert_eq!(st.frame_size_comp(i - 1).unwrap(), c_size);
+            assert_eq!(st.frame_size_decomp(i - 1).unwrap(), d_size);
+        }
+    }
+
     #[cfg(feature = "std")]
     fn test_serde_cycle_std(format: Format, num_frames: u32) {
         let st = seek_table(num_frames);
@@ -969,33 +1000,10 @@ mod tests {
         fn serialize_compatible_with_zstd_seekable(num_frames in 0..2048u32) {
             test_serialize_compatible_with_zstd_seekable(num_frames);
         }
-    }
 
-    #[test]
-    fn deserialize_compatible_with_zstd_seekable() {
-        const NUM_FRAMES: u32 = 1234;
-        let mut fl = zstd_safe::seekable::FrameLog::create(true);
-
-        for i in 1..=NUM_FRAMES {
-            fl.log_frame(i * 7, i * 13, Some(i)).unwrap();
-        }
-
-        // frame size of zstd seekable is 12,  c_size, d_size, checksum each 4
-        let cap = SKIPPABLE_HEADER_SIZE + (NUM_FRAMES * 12) as usize + SEEK_TABLE_INTEGRITY_SIZE;
-        let mut buf = vec![0; cap];
-        let mut out_buf = OutBuffer::around(&mut buf);
-        let n = fl.write_seek_table(&mut out_buf).unwrap();
-        // Verify that the entire seek table got written
-        assert_eq!(n, 0);
-
-        let st = SeekTable::from_bytes(&buf).unwrap();
-        assert_eq!(st.num_frames(), NUM_FRAMES);
-
-        for i in 1..=NUM_FRAMES {
-            let c_size = i as u64 * 7;
-            let d_size = i as u64 * 13;
-            assert_eq!(st.frame_size_comp(i - 1).unwrap(), c_size);
-            assert_eq!(st.frame_size_decomp(i - 1).unwrap(), d_size);
+        #[test]
+        fn deserialize_compatible_with_zstd_seekable(num_frames in 1..2048u32) {
+            test_deserialize_compatible_with_zstd_seekable(num_frames);
         }
     }
 }

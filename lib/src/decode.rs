@@ -130,7 +130,9 @@ impl<'a, S: Seekable> DecodeOptions<'a, S> {
 
 /// Decompresses data from a seekable source.
 ///
-/// A decoder reads compressed data from a seekable source.
+/// A decoder reads compressed data from a seekable source. By default, it decompresses
+/// everything, from the first to the last frame. This can be changed via [`DecodeOptions`] or by
+/// setting the offset after initialization.
 pub struct Decoder<'a, S> {
     dctx: DCtx<'a>,
     seek_table: SeekTable,
@@ -161,7 +163,7 @@ impl<'a, S: Seekable> Decoder<'a, S> {
     ///
     /// # Errors
     ///
-    /// Fails if the decoder could not be created.
+    /// Fails if the decoder cannot be created.
     pub fn with_opts(mut opts: DecodeOptions<'a, S>) -> Result<Self> {
         let seek_table = opts
             .seek_table
@@ -202,10 +204,10 @@ impl<'a, S: Seekable> Decoder<'a, S> {
     /// Decompresses data from the internal source.
     ///
     /// Call this repetetively to fill `buf` with decompressed data. Returns the number of bytes
-    /// written to `buf`.
+    /// written to `buf`. Decompression is finished when no more bytes are written to `buf`.
     ///
-    /// If a `prefix` is passed, it will be re-applied to every frame, as tables are discarded at
-    /// end of frame. Referencing a raw content prefix has almost no cpu nor memory cost.
+    /// If a `prefix` is passed, it will be referenced at the beginning of every frame.
+    /// Referencing a raw content prefix has almost no CPU nor memory cost.
     ///
     /// # Errors
     ///
@@ -283,11 +285,43 @@ impl<S: Seekable> Decoder<'_, S> {
     /// Decompresses data from the internal source.
     ///
     /// Call this repetetively to fill `buf` with decompressed data. Returns the number of bytes
-    /// written to `buf`.
+    /// written to `buf`. Decompression is finished when no more bytes are written to `buf`.
     ///
     /// # Errors
     ///
     /// If decompression fails or any parameter is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zeekstd::{BytesWrapper, RawEncoder};
+    /// # let mut encoder = RawEncoder::new()?;
+    /// # let mut seekable = [0u8; 128];
+    /// # let progress = encoder.compress(b"Hello, World!", &mut seekable)?;
+    /// # let end_progress = encoder.end_frame(&mut seekable[progress.output..])?;
+    /// # let mut ser = encoder.into_seek_table().into_serializer();
+    /// # let mut n = progress.output + end_progress.output;
+    /// # n += ser.write_into(&mut seekable[n..]);
+    /// # let seekable = BytesWrapper::new(&seekable[..n]);
+    /// use zeekstd::Decoder;
+    ///
+    /// let mut decoder = Decoder::new(seekable)?;
+    /// // Make sure `buf` is big enough to hold all decompressed data
+    /// let mut buf = [0u8; 128];
+    /// let mut progress = 0;
+    ///
+    /// // Decompress in a loop until no more bytes are written to `buf`
+    /// loop {
+    ///     let n = decoder.decompress(&mut buf[progress..])?;
+    ///     if n == 0 {
+    ///         break;
+    ///     }
+    ///     progress += n;
+    /// }
+    ///
+    /// # assert_eq!(b"Hello, World!", &buf[..progress]);
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn decompress(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.decompress_with_prefix(buf, None)
     }
@@ -295,8 +329,31 @@ impl<S: Seekable> Decoder<'_, S> {
     /// Resets the current decompresion status.
     ///
     /// This resets the internal decompression context as well as decompression offset and limit.
-    /// The next decompression after this function will start from the beginning of the seekable
-    /// source.
+    /// The next decompression operation after this function will start from the beginning of the
+    /// seekable source.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zeekstd::{BytesWrapper, RawEncoder};
+    /// # let mut encoder = RawEncoder::new()?;
+    /// # let mut seekable = [0u8; 128];
+    /// # let progress = encoder.compress(b"Hello, World!", &mut seekable)?;
+    /// # let end_progress = encoder.end_frame(&mut seekable[progress.output..])?;
+    /// # let mut ser = encoder.into_seek_table().into_serializer();
+    /// # let mut n = progress.output + end_progress.output;
+    /// # n += ser.write_into(&mut seekable[n..]);
+    /// # let seekable = BytesWrapper::new(&seekable[..n]);
+    /// use zeekstd::Decoder;
+    ///
+    /// let mut decoder = Decoder::new(seekable)?;
+    /// decoder.reset();
+    ///
+    /// assert_eq!(decoder.read_compressed(), 0);
+    /// assert_eq!(decoder.offset(), 0);
+    /// assert_eq!(decoder.offset_limit(), decoder.seek_table().size_decomp());
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
     pub fn reset(&mut self) {
         self.reset_dctx();
         self.offset = 0;
@@ -370,10 +427,10 @@ impl<S: Seekable> Decoder<'_, S> {
     /// Sets a limit for the decompression offset.
     ///
     /// The limit is the position in the _decompressed_ data of the seekable source at which
-    /// decompresion stops. This does not reset the current decompression state, the limit can be
-    /// changed in the middle of a decompression operation without interrupting an ongoing
-    /// decompression operation. It is possible to set a limit that is lower than the applied
-    /// offset. However, it will lead to any decompression operation making no progress, i.e.
+    /// decompression stops. This does not reset the current decompression state, the limit can be
+    /// changed in the middle of a decompression operation without interrupting the ongoing
+    /// operation. It is possible to set a limit that is lower than the current decompression
+    /// offset, however, it will lead to any decompression operation making no progress, i.e.
     /// it will produce zero decompressed bytes.
     ///
     /// **Note**: The decoder will immediately stop decompression at the specified limit. The
@@ -408,7 +465,7 @@ impl<S: Seekable> Decoder<'_, S> {
         &self.seek_table
     }
 
-    /// Gets the current offset of this decoder.
+    /// Gets the offset of this decoder.
     pub fn offset(&self) -> u64 {
         self.offset
     }
@@ -419,14 +476,83 @@ impl<S: Seekable> Decoder<'_, S> {
     }
 }
 
+/// Allows to read decompressed data from a `Decoder`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::{fs::File, io};
+/// use zeekstd::Decoder;
+///
+/// let seekable = File::open("seekable.zst")?;
+/// let mut output = File::create("output")?;
+/// let mut decoder = Decoder::new(seekable)?;
+/// io::copy(&mut decoder, &mut output)?;
+/// # Ok::<(), zeekstd::Error>(())
+/// ```
+///
+/// Similar to regular decompression, this supports frame limits.
+///
+/// ```no_run
+/// # use std::{fs::File, io};
+/// # use zeekstd::Decoder;
+/// # let seekable = File::open("seekable.zst")?;
+/// # let mut decoder = Decoder::new(seekable)?;
+/// decoder.set_lower_frame(2)?;
+/// decoder.set_upper_frame(3)?;
+/// io::copy(&mut decoder, &mut io::stdout())?;
+/// # Ok::<(), zeekstd::Error>(())
+/// ```
+///
+/// And also arbitrary byte offsets.
+///
+/// ```no_run
+/// # use std::{fs::File, io};
+/// # use zeekstd::Decoder;
+/// # let seekable = File::open("seekable.zst")?;
+/// # let mut decoder = Decoder::new(seekable)?;
+/// decoder.set_offset(123)?;
+/// decoder.set_offset_limit(456)?;
+/// io::copy(&mut decoder, &mut io::stdout())?;
+/// # Ok::<(), zeekstd::Error>(())
+/// ```
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl<S: Seekable> std::io::Read for Decoder<'_, S> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.decompress(buf).map_err(std::io::Error::other)
     }
 }
 
+/// Allows to set the offset of a `Decoder` via seeking.
+///
+/// # Examples
+///
+/// ```
+/// # use zeekstd::{BytesWrapper, RawEncoder};
+/// # let mut encoder = RawEncoder::new()?;
+/// # let mut seekable = [0u8; 128];
+/// # let progress = encoder.compress(b"Hello, World!", &mut seekable)?;
+/// # let end_progress = encoder.end_frame(&mut seekable[progress.output..])?;
+/// # let mut ser = encoder.into_seek_table().into_serializer();
+/// # let mut n = progress.output + end_progress.output;
+/// # n += ser.write_into(&mut seekable[n..]);
+/// # let seekable = BytesWrapper::new(&seekable[..n]);
+/// use std::io::{Seek, SeekFrom};
+/// use zeekstd::Decoder;
+///
+/// let mut decoder = Decoder::new(seekable)?;
+/// decoder.seek(SeekFrom::Start(7))?;
+///
+/// assert_eq!(decoder.offset(), 7);
+///
+/// # let mut buf = [0u8; 128];
+/// # let n = decoder.decompress(&mut buf)?;
+/// # assert_eq!(b"World!", &buf[..n]);
+/// # Ok::<(), zeekstd::Error>(())
+/// ```
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl<S: Seekable> std::io::Seek for Decoder<'_, S> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         use std::io::{self, SeekFrom};

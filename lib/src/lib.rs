@@ -9,70 +9,13 @@
 //! The frames are appended, so that the decompression of the entire payload still regenerates the
 //! original content, using any compliant zstd decoder.
 //!
-//! Zeekstd uses the bindings from the [zstd_safe] crate.
-//!
-//! # Compression
-//!
-//! A seekable [`Encoder`] will start new frames automatically at 2MiB of uncompressed data. See
-//! [`EncodeOptions`] to change this and other compression parameters.
-//!
-//! ```no_run
-//! use std::{fs::File, io};
-//! use zeekstd::Encoder;
-//!
-//! let mut input = File::open("foo")?;
-//! let output = File::create("foo.zst")?;
-//! let mut encoder = Encoder::new(output)?;
-//! io::copy(&mut input, &mut encoder)?;
-//! // End compression and write the seek table
-//! encoder.finish()?;
-//! # Ok::<(), zeekstd::Error>(())
-//! ```
-//! # Decompression
-//!
-//! By default, the seekable [`Decoder`] decompresses everything, from the first to the last frame.
-//!
-//! ```no_run
-//! use std::{fs::File, io};
-//! use zeekstd::Decoder;
-//!
-//! let input = File::open("seekable.zst")?;
-//! let mut output = File::create("data")?;
-//! let mut decoder = Decoder::new(input)?;
-//! io::copy(&mut decoder, &mut output)?;
-//! # Ok::<(), zeekstd::Error>(())
-//! ```
-//!
-//! It can also decompress only specific frames.
-//!
-//! ```no_run
-//! # use std::{fs::File, io};
-//! # use zeekstd::Decoder;
-//! # let seekable = File::open("seekable.zst")?;
-//! # let mut decoder = Decoder::new(seekable)?;
-//! decoder.set_lower_frame(2)?;
-//! decoder.set_upper_frame(3)?;
-//! io::copy(&mut decoder, &mut io::stdout())?;
-//! # Ok::<(), zeekstd::Error>(())
-//! ```
-//!
-//! Or between arbitrary byte offsets.
-//!
-//! ```no_run
-//! # use std::{fs::File, io};
-//! # use zeekstd::Decoder;
-//! # let seekable = File::open("seekable.zst")?;
-//! # let mut decoder = Decoder::new(seekable)?;
-//! decoder.set_offset(123)?;
-//! decoder.set_offset_limit(456)?;
-//! io::copy(&mut decoder, &mut io::stdout())?;
-//! # Ok::<(), zeekstd::Error>(())
-//! ```
+//! Zeekstd uses bindings from the [zstd_safe] crate.
 //!
 //! [specification]: https://github.com/rorosen/zeekstd/blob/main/seekable_format.md
 //! [zstd_safe]: https://docs.rs/zstd-safe/latest/zstd_safe/
 
 #![no_std]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 extern crate alloc;
 
@@ -87,6 +30,7 @@ mod seekable;
 
 pub use decode::{DecodeOptions, Decoder};
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub use encode::Encoder;
 pub use encode::{
     CompressionProgress, EncodeOptions, EpilogueProgress, FrameSizePolicy, RawEncoder,
