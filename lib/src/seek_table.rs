@@ -336,7 +336,7 @@ impl SeekTable {
         match format {
             Format::Head => src.set_offset(OffsetFrom::Start(0))?,
             Format::Foot => src.set_offset(OffsetFrom::End(-(parser.seek_table_size as i64)))?,
-        }
+        };
 
         let len = 8192.min(parser.seek_table_size);
         let mut buf = vec![0u8; len];

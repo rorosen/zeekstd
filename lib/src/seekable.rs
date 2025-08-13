@@ -16,10 +16,12 @@ pub enum OffsetFrom {
 pub trait Seekable {
     /// Sets the read offset from the start of the seekable.
     ///
+    /// If successful, returns the new position from the start of the seekable.
+    ///
     /// # Errors
     ///
     /// Fails if the offset cannot be set. e.g. because it is out of range.
-    fn set_offset(&mut self, offset: OffsetFrom) -> Result<()>;
+    fn set_offset(&mut self, offset: OffsetFrom) -> Result<u64>;
 
     /// Pull some bytes from this source into `buf`, returning how many bytes were read.
     ///
@@ -51,7 +53,7 @@ impl<'a> BytesWrapper<'a> {
 }
 
 impl Seekable for BytesWrapper<'_> {
-    fn set_offset(&mut self, offset: OffsetFrom) -> Result<()> {
+    fn set_offset(&mut self, offset: OffsetFrom) -> Result<u64> {
         let pos = match offset {
             OffsetFrom::Start(pos) => usize::try_from(pos).ok(),
             OffsetFrom::End(delta) => isize::try_from(delta)
@@ -67,7 +69,7 @@ impl Seekable for BytesWrapper<'_> {
 
         self.pos = pos;
 
-        Ok(())
+        Ok(pos as u64)
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
@@ -111,10 +113,8 @@ impl<T> Seekable for T
 where
     T: std::io::Read + std::io::Seek,
 {
-    fn set_offset(&mut self, offset: OffsetFrom) -> Result<()> {
-        self.seek(offset.into())?;
-
-        Ok(())
+    fn set_offset(&mut self, offset: OffsetFrom) -> Result<u64> {
+        Ok(self.seek(offset.into())?)
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
