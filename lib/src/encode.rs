@@ -1,4 +1,3 @@
-use alloc::vec;
 #[cfg(feature = "std")]
 use alloc::vec::Vec;
 use zstd_safe::{
@@ -575,7 +574,7 @@ impl<'a, W> Encoder<'a, W> {
     pub fn with_opts(writer: W, opts: EncodeOptions<'a>) -> Result<Self> {
         Ok(Self {
             raw: opts.into_raw_encoder()?,
-            out_buf: vec![0; CCtx::out_size()],
+            out_buf: alloc::vec![0; CCtx::out_size()],
             out_buf_pos: 0,
             writer,
             written_compressed: 0,
@@ -780,6 +779,8 @@ impl<W: std::io::Write> std::io::Write for Encoder<'_, W> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use crate::tests::INPUT;
 
     use super::*;

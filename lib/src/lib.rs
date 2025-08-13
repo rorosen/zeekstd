@@ -56,6 +56,7 @@ pub(crate) const SKIPPABLE_HEADER_SIZE: usize = 8;
 
 #[doc = include_str!("../../README.md")]
 #[cfg(doctest)]
+#[cfg(feature = "std")]
 pub struct ReadmeDoctests;
 
 #[cfg(test)]

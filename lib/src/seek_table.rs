@@ -318,15 +318,17 @@ impl SeekTable {
     /// # Ok::<(), zeekstd::Error>(())
     /// ```
     ///
-    /// Anything that implements [`std::io::Read`] and [`std::io::Seek`] implements [`Seekable`]
-    /// and can be used as `src`.
+    /// Additionally, anything that implements [`std::io::Read`] and [`std::io::Seek`] implements
+    /// [`Seekable`] and can be used as `src`.
     ///
     /// ```no_run
+    /// # #[cfg(feature = "std")] {
     /// use std::fs::File;
     /// use zeekstd::SeekTable;
     ///
     /// let mut seekable = File::open("seekable.zst")?;
     /// let seek_table = SeekTable::from_seekable(&mut seekable)?;
+    /// # }
     /// # Ok::<(), zeekstd::Error>(())
     /// ```
     pub fn from_seekable(src: &mut impl Seekable) -> Result<Self> {
@@ -357,15 +359,17 @@ impl SeekTable {
     /// # Ok::<(), zeekstd::Error>(())
     /// ```
     ///
-    /// Anything that implements [`std::io::Read`] and [`std::io::Seek`] implements [`Seekable`]
-    /// and can be used as `src`.
+    /// Additionally, anything that implements [`std::io::Read`] and [`std::io::Seek`] implements
+    /// [`Seekable`] and can be used as `src`.
     ///
     /// ```no_run
+    /// # #[cfg(feature = "std")] {
     /// use std::fs::File;
     /// use zeekstd::seek_table::{Format, SeekTable};
     ///
     /// let mut seekable = File::open("seekable.zst")?;
     /// let seek_table = SeekTable::from_seekable_format(&mut seekable, Format::Head)?;
+    /// # }
     /// # Ok::<(), zeekstd::Error>(())
     /// ```
     pub fn from_seekable_format(src: &mut impl Seekable, format: Format) -> Result<Self> {

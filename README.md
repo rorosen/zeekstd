@@ -6,10 +6,11 @@
 
 [![Crates.io](https://img.shields.io/crates/v/zeekstd.svg)](https://crates.io/crates/zeekstd)
 [![Documentation](https://docs.rs/zeekstd/badge.svg)](https://docs.rs/zeekstd)
-[![](https://img.shields.io/badge/Packaged_for-Nix-5277C3.svg?logo=nixos&labelColor=73C3D5)](https://search.nixos.org/packages?size=1&show=zeekstd)
 [![MSRV 1.85.1](https://img.shields.io/badge/msrv-1.85.1-dea584.svg?logo=rust)](https://github.com/rust-lang/rust/releases/tag/1.85.1)
 
-A Rust implementation of the Zstandard Seekable Format.
+[![](https://img.shields.io/badge/Packaged_for-Nix-5277C3.svg?logo=nixos&labelColor=73C3D5)](https://search.nixos.org/packages?size=1&show=zeekstd)
+
+Rust implementation of the Zstandard Seekable Format.
 
 The seekable format splits compressed data into a series of independent frames, each compressed
 individually, so that decompression of a section in the middle of an archive only requires zstd to
