@@ -286,17 +286,35 @@ impl SeekTable {
 
     /// Parses the seek table from a seekable archive.
     ///
-    /// This only works if the seek table is in `Foot` format and is appended to the end of the
-    /// seekable archive.
+    /// This only works if the seek table is in [`Foot`] format.
     ///
     /// # Errors
     ///
-    /// Returns an error if the seek table cannot be parsed or validation fails.
+    /// Fails if the seek table is not in [`Foot`] format, or if verification fails for another
+    /// reason.
+    ///
+    /// [`Foot`]: Format#variant.Foot
     ///
     /// # Examples
     ///
-    /// Anything that implements [`std::io::Read`] and [`std::io::Seek`] can be used as
-    /// a [`Seekable`].
+    /// Use a [`crate::BytesWrapper`] to parse the seek table from a byte slice.
+    ///
+    /// ```
+    /// # let mut seek_table = SeekTable::new();
+    /// # seek_table.log_frame(123, 456)?;
+    /// # let mut ser = seek_table.into_serializer();
+    /// # let mut buf = [0u8; 32];
+    /// # let n = ser.write_into(&mut buf);
+    /// # let seek_table_bytes = &buf[..n];
+    /// use zeekstd::{BytesWrapper, SeekTable};
+    ///
+    /// let mut wrapper = BytesWrapper::new(seek_table_bytes);
+    /// let seek_table = SeekTable::from_seekable(&mut wrapper)?;
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
+    ///
+    /// Anything that implements [`std::io::Read`] and [`std::io::Seek`] implements [`Seekable`]
+    /// and can be used as `src`.
     ///
     /// ```no_run
     /// use std::fs::File;
@@ -310,20 +328,36 @@ impl SeekTable {
         Self::from_seekable_format(src, Format::Foot)
     }
 
-    /// Parses the seek table from a seekable archive, expecting the given format.
+    /// Parses the seek table from a seekable archive, expecting the given `format`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the seek table cannot be parsed or validation fails.
+    /// Fails if the seek table is in the wrong format, or if verification fails for another reason.
     ///
     /// # Examples
     ///
-    /// Anything that implements [`std::io::Read`] and [`std::io::Seek`] can be used as
-    /// a [`Seekable`].
+    /// Use a [`crate::BytesWrapper`] to parse the seek table from a byte slice.
+    ///
+    /// ```
+    /// # let mut seek_table = SeekTable::new();
+    /// # seek_table.log_frame(123, 456)?;
+    /// # let mut ser = seek_table.into_format_serializer(Format::Head);
+    /// # let mut buf = [0u8; 32];
+    /// # let n = ser.write_into(&mut buf);
+    /// # let seek_table_bytes = &buf[..n];
+    /// use zeekstd::{BytesWrapper, SeekTable, seek_table::Format};
+    ///
+    /// let mut wrapper = BytesWrapper::new(seek_table_bytes);
+    /// let seek_table = SeekTable::from_seekable_format(&mut wrapper, Format::Head)?;
+    /// # Ok::<(), zeekstd::Error>(())
+    /// ```
+    ///
+    /// Anything that implements [`std::io::Read`] and [`std::io::Seek`] implements [`Seekable`]
+    /// and can be used as `src`.
     ///
     /// ```no_run
     /// use std::fs::File;
-    /// use zeekstd::{seek_table::Format, SeekTable};
+    /// use zeekstd::seek_table::{Format, SeekTable};
     ///
     /// let mut seekable = File::open("seekable.zst")?;
     /// let seek_table = SeekTable::from_seekable_format(&mut seekable, Format::Head)?;
@@ -381,54 +415,16 @@ impl SeekTable {
         Ok(parser.into())
     }
 
-    /// Parses a seek table from a byte slice.
+    /// Reads and parses a seek table from `reader`.
     ///
-    /// The passed `buf` should only contain the seek table, not the complete seekable archive.
-    /// Will first look for the seekable integrity field at the start of `buf` (`Head` format), if
-    /// that fails, it will try to find the integrity field at the end of `buf` (`Foot` format).
+    /// Only works if the seek table is in [`Head`] format.
     ///
     /// # Errors
     ///
-    /// Fails if the integrity field is neither present as header nor as footer, or if
-    /// verification fails.
+    /// Fails if the seek table is not in [`Head`] format, or if verification fails for another
+    /// reason.
     ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use std::fs;
-    /// use zeekstd::SeekTable;
-    ///
-    /// let seekable = fs::read("seekable.zst")?;
-    /// let seek_table = SeekTable::from_bytes(&seekable)?;
-    /// # Ok::<(), zeekstd::Error>(())
-    /// ```
-    pub fn from_bytes(buf: &[u8]) -> Result<Self> {
-        let mut offset = SKIPPABLE_HEADER_SIZE;
-        let mut parser = if read_le32!(buf, SKIPPABLE_HEADER_SIZE + 5) == SEEKABLE_MAGIC_NUMBER {
-            offset += SEEK_TABLE_INTEGRITY_SIZE;
-            Parser::from_bytes(&buf[SKIPPABLE_HEADER_SIZE..])?
-        } else {
-            let mut integrity = [0u8; SEEK_TABLE_INTEGRITY_SIZE];
-            integrity.copy_from_slice(&buf[buf.len() - SEEK_TABLE_INTEGRITY_SIZE..]);
-            Parser::from_bytes(&integrity)?
-        };
-
-        parser.verify_skippable_header(&buf[..SKIPPABLE_HEADER_SIZE])?;
-        parser.parse_entries(&buf[offset..]);
-        parser.verify()?;
-
-        Ok(parser.into())
-    }
-
-    /// Parses a seek table from a reader.
-    ///
-    /// The passed `reader` should only read the seek table, not the complete seekable archive.
-    /// Creating a `SeekTable` from a reader only works with seek tables in `Head` format (the
-    /// integrity field is placed at the beginning).
-    ///
-    /// # Errors
-    ///
-    /// Fails if the integrity field is not present as header, or if verification fails.
+    /// [`Head`]: Format#variant.Head
     ///
     /// # Examples
     ///
@@ -895,9 +891,6 @@ mod tests {
         let n = ser.write_into(&mut buf);
         assert_eq!(n, ser.encoded_len());
 
-        let from_bytes = SeekTable::from_bytes(&buf).unwrap();
-        assert_eq!(from_bytes, st);
-
         let mut wrapper = BytesWrapper::new(&buf);
         let from_seekable = SeekTable::from_seekable_format(&mut wrapper, format).unwrap();
         assert_eq!(from_seekable, st);
@@ -949,7 +942,8 @@ mod tests {
         // Verify that the entire seek table got written
         assert_eq!(n, 0);
 
-        let st = SeekTable::from_bytes(&buf).unwrap();
+        let mut wrapper = BytesWrapper::new(&buf);
+        let st = SeekTable::from_seekable(&mut wrapper).unwrap();
         assert_eq!(st.num_frames(), num_frames);
 
         for i in 1..=num_frames {
@@ -968,7 +962,8 @@ mod tests {
         let n = std::io::copy(&mut ser, &mut buf).unwrap();
         assert_eq!(n, ser.encoded_len() as u64);
 
-        let from_bytes = SeekTable::from_bytes(buf.get_ref()).unwrap();
+        let mut wrapper = BytesWrapper::new(buf.get_ref());
+        let from_bytes = SeekTable::from_seekable_format(&mut wrapper, format).unwrap();
         assert_eq!(from_bytes, st);
     }
 
