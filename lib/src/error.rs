@@ -21,9 +21,14 @@ impl Error {
         }
     }
 
-    /// Returns true if the error is of type `Other`.
+    /// Returns true if the error cannot be categorized into any other kind.
     pub fn is_other(&self) -> bool {
         matches!(self.kind, Kind::Other(_))
+    }
+
+    /// Returns true if the error origins from a failed number conversion.
+    pub fn is_number_conversion_failed(&self) -> bool {
+        matches!(self.kind, Kind::NumberConversionFailed(_))
     }
 
     pub(crate) fn offset_out_of_range() -> Self {
@@ -32,7 +37,7 @@ impl Error {
         }
     }
 
-    /// Returns true if the error is related to an offset that is out of range.
+    /// Returns true if the error origins from an out of range offset.
     pub fn is_offset_out_of_range(&self) -> bool {
         matches!(self.kind, Kind::OffsetOutOfRange)
     }
@@ -53,6 +58,13 @@ impl Error {
         Self {
             kind: Kind::Zstd(wrapped),
         }
+    }
+
+    /// Returns true if the error origins from an IO error.
+    #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    pub fn is_io(&self) -> bool {
+        matches!(self.kind, Kind::IO(_))
     }
 
     /// Returns true if the error origins from the zstd library.
@@ -86,6 +98,7 @@ impl From<core::num::TryFromIntError> for Error {
 }
 
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
         Self {
