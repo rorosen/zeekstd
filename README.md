@@ -3,9 +3,9 @@
 [![Nix](https://github.com/rorosen/zeekstd/actions/workflows/nix.yaml/badge.svg)](https://github.com/rorosen/zeekstd/actions/workflows/nix.yaml)
 [![Linux](https://github.com/rorosen/zeekstd/actions/workflows/linux.yaml/badge.svg)](https://github.com/rorosen/zeekstd/actions/workflows/linux.yaml)
 [![Windows](https://github.com/rorosen/zeekstd/actions/workflows/windows.yaml/badge.svg)](https://github.com/rorosen/zeekstd/actions/workflows/windows.yaml)
+[![Documentation](https://docs.rs/zeekstd/badge.svg)](https://docs.rs/zeekstd)
 
 [![Crates.io](https://img.shields.io/crates/v/zeekstd.svg)](https://crates.io/crates/zeekstd)
-[![Documentation](https://docs.rs/zeekstd/badge.svg)](https://docs.rs/zeekstd)
 [![MSRV 1.85.1](https://img.shields.io/badge/msrv-1.85.1-dea584.svg?logo=rust)](https://github.com/rust-lang/rust/releases/tag/1.85.1)
 
 [![](https://img.shields.io/badge/Packaged_for-Nix-5277C3.svg?logo=nixos&labelColor=73C3D5)](https://search.nixos.org/packages?size=1&show=zeekstd)

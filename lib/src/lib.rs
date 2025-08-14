@@ -255,6 +255,30 @@ mod tests {
         assert_eq!(new.as_bytes(), &output);
     }
 
+    #[cfg(feature = "std")]
+    fn test_cycle_std(frame_size_policy: Option<FrameSizePolicy>) {
+        use std::io::{Cursor, copy};
+
+        let mut input = Cursor::new(INPUT);
+        let mut seekable = Cursor::new(vec![]);
+        let mut opts = EncodeOptions::new();
+        if let Some(policy) = frame_size_policy {
+            opts = opts.frame_size_policy(policy);
+        }
+
+        let mut encoder = opts.into_encoder(&mut seekable).unwrap();
+        copy(&mut input, &mut encoder).unwrap();
+
+        let n = encoder.finish().unwrap();
+        assert_eq!(n, seekable.position());
+
+        let mut decoder = Decoder::new(seekable).unwrap();
+        let mut output = Cursor::new(vec![]);
+        copy(&mut decoder, &mut output).unwrap();
+
+        assert_eq!(INPUT.as_bytes(), output.get_ref());
+    }
+
     #[test]
     fn cycle() {
         test_cycle(None);
@@ -275,6 +299,12 @@ mod tests {
         test_cycle_stand_alone_seek_table(None, Format::Foot);
     }
 
+    #[test]
+    #[cfg(feature = "std")]
+    fn cycle_std() {
+        test_cycle_std(None);
+    }
+
     proptest! {
         #[test]
         fn cycle_custom_compressed_frame_size(frame_size in 1..1024u32) {
@@ -284,6 +314,18 @@ mod tests {
         #[test]
         fn cycle_custom_decompressed_frame_size(frame_size in 1..1024u32) {
             test_cycle(Some(FrameSizePolicy::Uncompressed(frame_size)));
+        }
+
+        #[test]
+        #[cfg(feature = "std")]
+        fn cycle_custom_compressed_frame_size_std(frame_size in 1..1024u32) {
+            test_cycle(Some(FrameSizePolicy::Compressed(frame_size)));
+        }
+
+        #[test]
+        #[cfg(feature = "std")]
+        fn cycle_custom_decompressed_frame_size_std(frame_size in 1..1024u32) {
+            test_cycle_std(Some(FrameSizePolicy::Uncompressed(frame_size)));
         }
 
         #[test]
