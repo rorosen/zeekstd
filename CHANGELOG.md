@@ -7,6 +7,57 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [lib]
+
+### Fixed
+
+- The `read()` function of the implementation of the `Seekable` trait for `BytesWrapper` no longer
+  panics due to wrong internal range boundaries
+- Fixed a problem where frames weren't logged in the seek table when the frame epilogue exactly
+  filled the output buffer in use.
+
+### Added
+
+- New enum `OffsetFrom` with the variants `Start(u64)` and `End(i64)`. Works similar to
+  `std::io::SeekFrom`.
+- New structs `CompressionProgress` and `EpilogueProgress`, which are used to indicate the progress
+  of a compression/epilogue writing step.
+- Added the `std` feature, which is enabled by default. Disabling the `std` feature limits
+  higher-level features of zeekstd, but also allows it to run in `no_std` programs.
+
+### Changed
+
+The `Seekable` trait has changed in an incompatible way:
+
+- The function `Seekable::seek_table_footer()` was removed
+- The function `Seekable::seek_to_seek_table_start()` was removed
+- The function `Seekable::set_offset()` now returns `Result<u64>` where the `u64` value is the new
+  offset position form the start of the seekable object.
+- The type of `offset` in `Seekable::set_offset()` changed from `u64` to `OffsetFrom`
+- The function `Seekable::seek_table_integrity()` was added
+
+The `RawEncoder` struct has changed in an incompatible way:
+
+- The functions `RawEncoder::compress()` and `RawEncoder::compress_with_prefix` now return
+  `Result<CompressionProgress>` instead of an anonymous tuple
+- The function `RawEncoder::end_frame()` now returns `Result<EpilogueProgress>` instead of an
+  anonymous tuple
+
+The `EncodeOptions` struct has changed in an incompatible way:
+
+- The function `EncodeOptions::into_raw()` was renamed to `EncodeOptions::into_raw_encoder()`
+
+The `SeekTable` struct has changed in an incompatible way:
+
+- The function `SeekTable::from_seekable_format()` was added
+- The function `SeekTable::from_bytes()` was removed. Use `SeekTable::from_seekable()` or
+  `SeekTable::from_seekable_format()` together with the `ByteWrapper` struct instead.
+
+The `Error` struct changed in an incompatible way:
+
+- The function `Error::other()` was removed
+- The function `Error::is_other()` was removed
+
 ## [0.5.1-lib]
 
 ### Added
