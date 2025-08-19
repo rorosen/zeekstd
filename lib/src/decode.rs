@@ -282,10 +282,10 @@ impl<S: Seekable> Decoder<'_, S> {
     /// # use zeekstd::{BytesWrapper, RawEncoder};
     /// # let mut encoder = RawEncoder::new()?;
     /// # let mut seekable = [0u8; 128];
-    /// # let progress = encoder.compress(b"Hello, World!", &mut seekable)?;
-    /// # let end_progress = encoder.end_frame(&mut seekable[progress.output..])?;
+    /// # let prog = encoder.compress(b"Hello, World!", &mut seekable)?;
+    /// # let end_prog = encoder.end_frame(&mut seekable[prog.out_progress()..])?;
     /// # let mut ser = encoder.into_seek_table().into_serializer();
-    /// # let mut n = progress.output + end_progress.output;
+    /// # let mut n = prog.out_progress() + end_prog.out_progress();
     /// # n += ser.write_into(&mut seekable[n..]);
     /// # let seekable = BytesWrapper::new(&seekable[..n]);
     /// use zeekstd::Decoder;
@@ -323,10 +323,10 @@ impl<S: Seekable> Decoder<'_, S> {
     /// # use zeekstd::{BytesWrapper, RawEncoder};
     /// # let mut encoder = RawEncoder::new()?;
     /// # let mut seekable = [0u8; 128];
-    /// # let progress = encoder.compress(b"Hello, World!", &mut seekable)?;
-    /// # let end_progress = encoder.end_frame(&mut seekable[progress.output..])?;
+    /// # let prog = encoder.compress(b"Hello, World!", &mut seekable)?;
+    /// # let end_prog = encoder.end_frame(&mut seekable[prog.out_progress()..])?;
     /// # let mut ser = encoder.into_seek_table().into_serializer();
-    /// # let mut n = progress.output + end_progress.output;
+    /// # let mut n = prog.out_progress() + end_prog.out_progress();
     /// # n += ser.write_into(&mut seekable[n..]);
     /// # let seekable = BytesWrapper::new(&seekable[..n]);
     /// use zeekstd::Decoder;
@@ -517,10 +517,10 @@ impl<S: Seekable> std::io::Read for Decoder<'_, S> {
 /// # use zeekstd::{BytesWrapper, RawEncoder};
 /// # let mut encoder = RawEncoder::new()?;
 /// # let mut seekable = [0u8; 128];
-/// # let progress = encoder.compress(b"Hello, World!", &mut seekable)?;
-/// # let end_progress = encoder.end_frame(&mut seekable[progress.output..])?;
+/// # let prog = encoder.compress(b"Hello, World!", &mut seekable)?;
+/// # let end_prog = encoder.end_frame(&mut seekable[prog.out_progress()..])?;
 /// # let mut ser = encoder.into_seek_table().into_serializer();
-/// # let mut n = progress.output + end_progress.output;
+/// # let mut n = prog.out_progress() + end_prog.out_progress();
 /// # n += ser.write_into(&mut seekable[n..]);
 /// # let seekable = BytesWrapper::new(&seekable[..n]);
 /// use std::io::{Seek, SeekFrom};
@@ -595,17 +595,17 @@ mod tests {
             let progress = encoder
                 .compress(&INPUT.as_bytes()[in_progress..], &mut buf)
                 .unwrap();
-            seekable.extend(&buf[..progress.output]);
-            in_progress += progress.input;
-            out_progress += progress.output;
+            seekable.extend(&buf[..progress.out_progress()]);
+            in_progress += progress.in_progress();
+            out_progress += progress.out_progress();
         }
         assert_eq!(in_progress, INPUT.len());
 
         loop {
             let prog = encoder.end_frame(&mut buf).unwrap();
-            seekable.extend(&buf[..prog.output]);
-            out_progress += prog.output;
-            if prog.left == 0 {
+            seekable.extend(&buf[..prog.out_progress()]);
+            out_progress += prog.out_progress();
+            if prog.data_left() == 0 {
                 break;
             }
         }

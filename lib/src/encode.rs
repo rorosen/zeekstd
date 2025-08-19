@@ -41,31 +41,53 @@ impl Default for FrameSizePolicy {
 /// The progress of a compression step.
 #[derive(Debug)]
 pub struct CompressionProgress {
-    /// The input progress, i.e. the number of bytes that were consumed from the input buffer.
-    pub input: usize,
-    /// The output progress, i.e. the number of bytes that were written to the output buffer.
-    pub output: usize,
+    in_progress: usize,
+    out_progress: usize,
 }
 
 impl CompressionProgress {
-    fn new(input: usize, output: usize) -> Self {
-        Self { input, output }
+    fn new(in_progress: usize, out_progress: usize) -> Self {
+        Self {
+            in_progress,
+            out_progress,
+        }
+    }
+
+    /// The input progress, i.e. the number of bytes that were consumed from the input buffer.
+    pub fn in_progress(&self) -> usize {
+        self.in_progress
+    }
+
+    /// The output progress, i.e. the number of bytes that were written to the output buffer.
+    pub fn out_progress(&self) -> usize {
+        self.out_progress
     }
 }
 
 /// The progress of writing the frame epilogue.
 #[derive(Debug)]
 pub struct EpilogueProgress {
-    /// The output progress, i.e. the number of bytes that were written to the output buffer.
-    pub output: usize,
-    /// A minimal estimation of the bytes left to flush. The epilogue is entirely written if this
-    /// value is zero.
-    pub left: usize,
+    out_progress: usize,
+    data_left: usize,
 }
 
 impl EpilogueProgress {
-    fn new(output: usize, left: usize) -> Self {
-        Self { output, left }
+    fn new(out_progress: usize, data_left: usize) -> Self {
+        Self {
+            out_progress,
+            data_left,
+        }
+    }
+
+    /// The output progress, i.e. the number of bytes that were written to the output buffer.
+    pub fn out_progress(&self) -> usize {
+        self.out_progress
+    }
+
+    /// A minimal estimation of the bytes left to flush. The epilogue is entirely written if this
+    /// value is zero.
+    pub fn data_left(&self) -> usize {
+        self.data_left
     }
 }
 
@@ -208,18 +230,18 @@ impl<'a> EncodeOptions<'a> {
 ///
 /// // Compress input data...
 /// while in_progress < input.len() {
-///     let progress = encoder.compress(&input[in_progress..], &mut buf[out_progress..])?;
-///     in_progress += progress.input;
-///     out_progress += progress.output;
+///     let prog = encoder.compress(&input[in_progress..], &mut buf[out_progress..])?;
+///     in_progress += prog.in_progress();
+///     out_progress += prog.out_progress();
 /// }
 ///
 /// // Write the frame epilogue...
 /// // This is done automatically during compression according to the configured frame size policy,
 /// // however, you need to end the last frame manually
 /// loop {
-///     let progress = encoder.end_frame(&mut buf[out_progress..])?;
-///     out_progress += progress.output;
-///     if progress.left == 0 {
+///     let prog = encoder.end_frame(&mut buf[out_progress..])?;
+///     out_progress += prog.out_progress();
+///     if prog.data_left() == 0 {
 ///         break;
 ///     }
 /// }
@@ -296,8 +318,8 @@ impl<'a> RawEncoder<'a> {
             let mut out_progress = 0;
             while out_progress < output.len() {
                 let progress = self.end_frame(&mut output[out_progress..])?;
-                out_progress += progress.output;
-                if progress.left == 0 {
+                out_progress += progress.out_progress;
+                if progress.data_left == 0 {
                     break;
                 }
             }
@@ -367,9 +389,9 @@ impl RawEncoder<'_> {
     /// let mut buf = [0u8; 4];
     ///
     /// while in_progress < input.len() {
-    ///     let progress = encoder.compress(&input[in_progress..], &mut buf)?;
-    ///     output.extend(&buf[..progress.output]);
-    ///     in_progress += progress.input;
+    ///     let prog = encoder.compress(&input[in_progress..], &mut buf)?;
+    ///     output.extend(&buf[..prog.out_progress()]);
+    ///     in_progress += prog.in_progress();
     /// }
     /// # Ok::<(), zeekstd::Error>(())
     /// ```
@@ -405,9 +427,9 @@ impl RawEncoder<'_> {
     /// // Compress input data...
     ///
     /// loop {
-    ///     let progress = encoder.end_frame(&mut buf)?;
-    ///     output.extend(&buf[..progress.output]);
-    ///     if progress.left == 0 {
+    ///     let prog = encoder.end_frame(&mut buf)?;
+    ///     output.extend(&buf[..prog.out_progress()]);
+    ///     if prog.data_left() == 0 {
     ///         break;
     ///     }
     /// }
@@ -630,13 +652,13 @@ impl<'a, W: std::io::Write> Encoder<'a, W> {
                 prefix,
             )?;
 
-            if progress.input == 0 && progress.output == 0 {
+            if progress.in_progress == 0 && progress.out_progress == 0 {
                 break;
             }
 
-            self.out_buf_pos += progress.output;
+            self.out_buf_pos += progress.out_progress;
             self.flush_out_buf(false)?;
-            input_progress += progress.input;
+            input_progress += progress.in_progress;
         }
 
         Ok(input_progress)
@@ -684,11 +706,11 @@ impl<W: std::io::Write> Encoder<'_, W> {
 
         loop {
             let prog = self.raw.end_frame(&mut self.out_buf[self.out_buf_pos..])?;
-            self.out_buf_pos += prog.output;
+            self.out_buf_pos += prog.out_progress;
             self.flush_out_buf(false)?;
-            progress += prog.output;
+            progress += prog.out_progress;
 
-            if prog.left == 0 {
+            if prog.data_left == 0 {
                 return Ok(progress);
             }
         }
@@ -824,14 +846,14 @@ mod tests {
             let progress = encoder
                 .compress(&INPUT.as_bytes()[in_progress..], &mut buf)
                 .unwrap();
-            seekable.extend(&buf[..progress.output]);
-            in_progress += progress.input;
+            seekable.extend(&buf[..progress.out_progress]);
+            in_progress += progress.in_progress;
         }
 
         loop {
             let prog = encoder.end_frame(&mut buf).unwrap();
-            seekable.extend(&buf[..prog.output]);
-            if prog.left == 0 {
+            seekable.extend(&buf[..prog.out_progress]);
+            if prog.data_left == 0 {
                 break;
             }
         }
