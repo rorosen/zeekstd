@@ -39,9 +39,9 @@ The `Seekable` trait has changed in an incompatible way:
 The `RawEncoder` struct has changed in an incompatible way:
 
 - The functions `RawEncoder::compress()` and `RawEncoder::compress_with_prefix` now return
-  `Result<CompressionProgress>` instead of an anonymous tuple
-- The function `RawEncoder::end_frame()` now returns `Result<EpilogueProgress>` instead of an
-  anonymous tuple
+  `Result<CompressionProgress>` instead of `Result<(u64, u64)>`
+- The function `RawEncoder::end_frame()` now returns `Result<EpilogueProgress>` instead of
+  `Result<(u64, u64)>`
 
 The `EncodeOptions` struct has changed in an incompatible way:
 
