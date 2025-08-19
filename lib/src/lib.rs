@@ -90,14 +90,14 @@ mod tests {
             let progress = encoder
                 .compress(&INPUT.as_bytes()[in_progress..], &mut buf)
                 .unwrap();
-            seekable.extend(&buf[..progress.output]);
-            in_progress += progress.input;
+            seekable.extend(&buf[..progress.out_progress()]);
+            in_progress += progress.in_progress();
         }
 
         loop {
             let prog = encoder.end_frame(&mut buf).unwrap();
-            seekable.extend(&buf[..prog.output]);
-            if prog.left == 0 {
+            seekable.extend(&buf[..prog.out_progress()]);
+            if prog.data_left() == 0 {
                 break;
             }
         }
@@ -147,14 +147,14 @@ mod tests {
             let progress = encoder
                 .compress(&INPUT.as_bytes()[in_progress..], &mut buf)
                 .unwrap();
-            seekable.extend(&buf[..progress.output]);
-            in_progress += progress.input;
+            seekable.extend(&buf[..progress.out_progress()]);
+            in_progress += progress.in_progress();
         }
 
         loop {
             let prog = encoder.end_frame(&mut buf).unwrap();
-            seekable.extend(&buf[..prog.output]);
-            if prog.left == 0 {
+            seekable.extend(&buf[..prog.out_progress()]);
+            if prog.data_left() == 0 {
                 break;
             }
         }
@@ -217,14 +217,14 @@ mod tests {
                     Some(old.as_bytes()),
                 )
                 .unwrap();
-            patch.extend(&buf[..progress.output]);
-            in_progress += progress.input;
+            patch.extend(&buf[..progress.out_progress()]);
+            in_progress += progress.in_progress();
         }
 
         loop {
             let prog = encoder.end_frame(&mut buf).unwrap();
-            patch.extend(&buf[..prog.output]);
-            if prog.left == 0 {
+            patch.extend(&buf[..prog.out_progress()]);
+            if prog.data_left() == 0 {
                 break;
             }
         }
