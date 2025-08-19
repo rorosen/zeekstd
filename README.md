@@ -32,6 +32,16 @@ Zeekstd makes additions to the seekable format by implementing an updated versio
 [zeekstd_spec]: ./seekable_format.md
 [zstd_spec]: <https://github.com/facebook/zstd/blob/dev/contrib/seekable_format/zstd_seekable_compression_format.md>
 
+## Finding the Right Frame Size
+
+Every frame adds a small amount of metadata depending on compression parameters (e.g. whether frame
+checksums are used) and increases the size of the seek table. Hence, small frame sizes impact the
+compression ratio negatively, but also reduce decompression cost when requesting small segments of
+data, so there is a balance to find.
+
+Very small frame sizes below a few KiB should be avoided in general, as they can hurt the
+compression ratio notably.
+
 ## Compression
 
 A seekable `Encoder` will start new frames automatically at 2MiB of uncompressed data. See
@@ -52,16 +62,6 @@ fn main() -> zeekstd::Result<()> {
     Ok(())
 }
 ```
-
-### Finding the Right Frame Size
-
-Small frame sizes reduce decompression cost when requesting small segments, but also impact the
-compression ratio negatively. Every frame adds a small amount of metadata depending on compression
-parameters (e.g. whether frame checksums are used) and increases the size of the seek table.
-
-The right balance between the cost of decompression for small segments and the compression ratio
-depend on the use case. Very small frame sizes below a few KiB should be avoided in general, as they
-can hurt the compression ratio notably.
 
 ## Decompression
 
