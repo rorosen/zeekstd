@@ -11,6 +11,13 @@
 //!
 //! Zeekstd uses bindings from the [zstd_safe] crate.
 //!
+//! # Getting Started
+//!
+//! - The [`RawEncoder`] and [`Encoder`] compress data into seekable archives.
+//! - The [`Decoder`] performs seekable decompression.
+//! - The [`SeekTable`] holds information of the frames of a seekable archive, it gets created and
+//!   updated automatically during compression.
+//!
 //! [specification]: https://github.com/rorosen/zeekstd/blob/main/seekable_format.md
 //! [zstd_safe]: https://docs.rs/zstd-safe/latest/zstd_safe/
 

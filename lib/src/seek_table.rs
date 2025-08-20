@@ -241,24 +241,26 @@ pub enum Format {
 /// Holds information of the frames of a seekable archive.
 ///
 /// The `SeekTable` contains the frame boundaries of a seekable compressed file. It allows
-/// decompressors to efficiently jump to the frames that contain requested data.
+/// decompressors to efficiently jump to the frames that contain requested data. The seek table is
+/// always placed in a [Zstandard skippable frame] during serialization.
 ///
 /// Seek tables can be serialized in two different [`Format`]s that control where the seek table
 /// integrity field is placed in the skippable seek table frame.
 ///
-/// - [`Head`]: The seek table is placed at the beginning of the seek table frame. Suitable for
-///   stand-alone seek tables.
-/// - [`Foot`]: The seek table is placed at the end of the seek table frame. Suitable for seek
-///   tables that are appended to compressed data.
+/// - [`Head`]: The integrity field is placed at the beginning of the seek table frame. Suitable
+///   for stand-alone seek tables.
+/// - [`Foot`]: The integrity field is placed at the end of the seek table frame. Suitable for seek
+///   tables that are appended to compressed data. This is the default format.
 ///
-/// [`Encoder`] and [`RawEncoder`] both create a seek table while compressing data. The [`Decoder`]
-/// parses the seek table during intialization.
+/// [`Encoder`] and [`RawEncoder`] both create a seek table and update it while compressing data.
+/// A [`Decoder`] parses the seek table during intialization.
 ///
 /// [`Encoder`]: crate::Encoder
 /// [`RawEncoder`]: crate::RawEncoder
 /// [`Decoder`]: crate::Decoder
 /// [`Foot`]: Format#variant.Foot
 /// [`Head`]: Format#variant.Head
+/// [Zstandard skippable frame]: https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md#skippable-frames
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeekTable {
     entries: Entries,
@@ -367,7 +369,7 @@ impl SeekTable {
     /// use std::fs::File;
     /// use zeekstd::seek_table::{Format, SeekTable};
     ///
-    /// let mut seekable = File::open("seekable.zst")?;
+    /// let mut seekable = File::open("my_seek_table")?;
     /// let seek_table = SeekTable::from_seekable_format(&mut seekable, Format::Head)?;
     /// # }
     /// # Ok::<(), zeekstd::Error>(())
@@ -441,12 +443,13 @@ impl SeekTable {
     /// use std::fs::File;
     /// use zeekstd::SeekTable;
     ///
-    /// let mut reader = File::open("my/seek_table")?;
+    /// let mut reader = File::open("my_seek_table")?;
     /// let seek_table = SeekTable::from_reader(&mut reader)?;
     /// # Ok::<(), zeekstd::Error>(())
     /// ```
     #[cfg(feature = "std")]
-    pub fn from_reader(reader: &mut impl std::io::Read) -> Result<Self> {
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    pub fn from_reader(mut reader: impl std::io::Read) -> Result<Self> {
         let mut buf = [0u8; SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE];
         reader.read_exact(&mut buf)?;
 
@@ -848,8 +851,7 @@ impl SeekTable {
 
     /// Convert this seek table into a [`Serializer`].
     ///
-    /// The seek table is serialized in [`Foot`] format. It is not possible to add frames to the
-    /// `Serializer`.
+    /// The seek table is serialized in [`Foot`] format.
     ///
     /// [`Foot`]: Format#variant.Foot
     ///
@@ -875,8 +877,7 @@ impl SeekTable {
 
     /// Convert this seek table into a [`Serializer`] with the given `format`.
     ///
-    /// The seek table is serialized according to `format`. It is not possible to add frames to the
-    /// `Serializer`.
+    /// The seek table is serialized according to `format`.
     ///
     /// # Examples
     ///
@@ -957,7 +958,7 @@ impl Serializer {
     pub fn write_into(&mut self, buf: &mut [u8]) -> usize {
         let mut buf_pos = 0;
 
-        // Write skipable header
+        // Write skippable header
         write_le32!(buf, buf_pos, self.write_pos, SKIPPABLE_MAGIC_NUMBER, 0);
         write_le32!(buf, buf_pos, self.write_pos, self.frame_size(), 4);
 
@@ -1026,7 +1027,9 @@ impl Serializer {
         self.frame_index = 0;
     }
 
-    /// The length of the entire skippable frame, including skippable header and frame size.
+    /// The length of the entire skippable frame that contains the seek table.
+    ///
+    /// Includes the skippable header and frame size field.
     pub fn encoded_len(&self) -> usize {
         SKIPPABLE_HEADER_SIZE + SEEK_TABLE_INTEGRITY_SIZE + self.frames.len() * SIZE_PER_FRAME
     }

@@ -208,14 +208,14 @@ impl<'a> EncodeOptions<'a> {
 
 /// A reusable, seekable encoder.
 ///
-/// Performs low level in-memory seekable compression for streams of data. The `RawEncoder` will
-/// start new frames automatically at 2MiB of uncompressed data by default. See [`EncodeOptions`]
-/// to change this and other compression parameters.
+/// Performs low level in-memory seekable compression for streams of data. The `RawEncoder` starts
+/// new frames automatically at 2MiB of uncompressed data by default. See [`EncodeOptions`] to
+/// change this and other compression parameters.
 ///
 /// # Examples
 ///
-/// Creates a seekable archive using a `RawEncoder`. Use an [`Encoder`], if you want a more
-/// approachable interface.
+/// Creates a seekable archive using a `RawEncoder`. See the [`Encoder`], for a more approachable
+/// interface.
 ///
 /// ```
 /// use zeekstd::RawEncoder;
@@ -246,7 +246,7 @@ impl<'a> EncodeOptions<'a> {
 ///     }
 /// }
 ///
-/// // Write the seek table to the end...
+/// // Finally, append the seek table...
 /// let mut seek_table_serializer = encoder.into_seek_table().into_serializer();
 /// loop {
 ///     let n = seek_table_serializer.write_into(&mut buf[out_progress..]);
@@ -546,7 +546,7 @@ impl RawEncoder<'_> {
 
 /// A single-use seekable encoder.
 ///
-/// The `Encoder` will start new frames automatically at 2MiB of uncompressed data by default. See
+/// The `Encoder` starts new frames automatically at 2MiB of uncompressed data by default. See
 /// [`EncodeOptions`] to change this and other compression parameters.
 ///
 /// # Examples
