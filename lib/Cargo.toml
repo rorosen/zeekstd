@@ -1,6 +1,6 @@
 [package]
 name = "zeekstd"
-version = "0.5.1"
+version = "0.6.0"
 description = "Rust implementation of the Zstandard Seekable Format."
 edition.workspace = true
 license.workspace = true
