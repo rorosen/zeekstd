@@ -15,8 +15,8 @@ name = "zeekstd"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0.98"
-clap = { version = "4.5.42", features = ["derive"] }
+anyhow = "1.0.99"
+clap = { version = "4.5.45", features = ["derive"] }
 indicatif = "0.18.0"
 memmap2 = "0.9.7"
 zeekstd = { path = "../lib" }
@@ -27,4 +27,4 @@ workspace = true
 
 [dev-dependencies]
 assert_cmd = "2.0.17"
-tempfile = "3.20.0"
+tempfile = "3.21.0"
