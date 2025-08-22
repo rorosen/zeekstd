@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, str::FromStr};
 use anyhow::{Context, bail};
 use clap::{Parser, ValueEnum};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use zeekstd::{CompressionLevel, SeekTable};
+use zeekstd::{CompressionLevel, SeekTable, seek_table};
 
 // 128 MiB
 const MMAP_THRESHOLD: u64 = 0x0010_0000;
@@ -301,6 +301,15 @@ pub struct ListArgs {
 
     /// Input file.
     pub input_file: String,
+}
+
+impl From<SeekTableFormat> for seek_table::Format {
+    fn from(value: SeekTableFormat) -> Self {
+        match value {
+            SeekTableFormat::Head => seek_table::Format::Head,
+            SeekTableFormat::Foot => seek_table::Format::Foot,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@ use memmap2::Mmap;
 use zeekstd::SeekTable;
 
 use crate::{
-    args::{CliFlags, CompressArgs, DecompressArgs, LastFrame, ListArgs, SeekTableFormat},
+    args::{CliFlags, CompressArgs, DecompressArgs, LastFrame, ListArgs},
     compress::Compressor,
     decompress::Decompressor,
 };
@@ -230,11 +230,9 @@ impl Command {
             }
             Command::List(args) => {
                 let mut file = File::open(&args.input_file).context("Failed to open input file")?;
-                let seek_table = match args.seek_table_format {
-                    SeekTableFormat::Head => SeekTable::from_reader(&mut file),
-                    SeekTableFormat::Foot => SeekTable::from_seekable(&mut file),
-                }
-                .context("Failed to read seek table")?;
+                let seek_table =
+                    SeekTable::from_seekable_format(&mut file, args.seek_table_format.into())
+                        .context("Failed to read seek table")?;
 
                 let end_frame = if let Some(num) = args.num_frames {
                     Some(args.from_frame.unwrap_or(0) + num)
