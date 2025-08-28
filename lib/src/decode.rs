@@ -230,7 +230,11 @@ impl<'a, S: Seekable> Decoder<'a, S> {
                 let limit = (self.offset - self.decomp_pos).min(self.out_buf.len() as u64) as usize;
                 OutBuffer::around(&mut self.out_buf[..limit])
             } else {
-                let limit = (self.offset_limit - self.decomp_pos).min(buf.len() as u64) as usize;
+                // Bytes we still need to decompress, capped at usize::MAX
+                let remaining: usize = (self.offset_limit - self.decomp_pos)
+                    .try_into()
+                    .unwrap_or(usize::MAX);
+                let limit = buf.len().min(output_progress + remaining);
                 OutBuffer::around(&mut buf[output_progress..limit])
             };
 
