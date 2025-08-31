@@ -7,11 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2-cli]
+
+### Changed
+
+- Use lib `v0.6.1`
+
 ## [0.6.1-lib]
 
 ### Fixed
 
-- Decoding no longer panics due to wrong slice indexing when the output buffer is partially filled.
+- Decoding no longer panics due to wrong slice indexing when the output buffer is partially filled
 
 ## [0.6.0-lib]
 
@@ -20,16 +26,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `read()` function of the implementation of the `Seekable` trait for `BytesWrapper` no longer
   panics due to wrong internal range boundaries
 - Fixed a problem where frames were not logged in the seek table when the frame epilogue exactly
-  filled the output buffer in use.
+  filled the output buffer in use
 
 ### Added
 
 - New enum `OffsetFrom` with the variants `Start(u64)` and `End(i64)`. Works similar to
-  `std::io::SeekFrom`.
+  `std::io::SeekFrom`
 - New structs `CompressionProgress` and `EpilogueProgress`, which are used to indicate the progress
-  of a compression/epilogue writing step.
+  of a compression/epilogue writing step
 - Added the `std` feature, which is enabled by default. Disabling the `std` feature limits
-  higher-level features of zeekstd, but also allows it to run in `no_std` programs.
+  higher-level features of zeekstd, but also allows it to run in `no_std` programs
 
 ### Changed
 
@@ -38,7 +44,7 @@ The `Seekable` trait has changed in an incompatible way:
 - The method `Seekable::seek_table_footer()` was removed
 - The method `Seekable::seek_to_seek_table_start()` was removed
 - The method `Seekable::set_offset()` now returns `Result<u64>` where the `u64` value is the new
-  offset position form the start of the seekable object.
+  offset position form the start of the seekable object
 - The type of `offset` in `Seekable::set_offset()` changed from `u64` to `OffsetFrom`
 - The method `Seekable::seek_table_integrity()` was added
 
@@ -57,7 +63,7 @@ The `SeekTable` struct has changed in an incompatible way:
 
 - The method `SeekTable::from_seekable_format()` was added
 - The method `SeekTable::from_bytes()` was removed. Use `SeekTable::from_seekable()` or
-  `SeekTable::from_seekable_format()` together with the `BytesWrapper` struct instead.
+  `SeekTable::from_seekable_format()` together with the `BytesWrapper` struct instead
 
 The `Error` struct changed in an incompatible way:
 
@@ -79,7 +85,7 @@ The `Error` struct changed in an incompatible way:
 ### Fixed
 
 - The window size that is used when creating/applying binary patches is now always big enough to fit
-  the complete prefix.
+  the complete prefix
 - Parsing a seek table with 1022 frames does not falsely yield a "corruption detected" error anymore
 
 ## [0.5.0-lib]
