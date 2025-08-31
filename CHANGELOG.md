@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1-lib]
+
+### Fixed
+
+- Decoding no longer panics due to wrong slice indexing when the output buffer is partially filled.
+
 ## [0.6.0-lib]
 
 ### Fixed
