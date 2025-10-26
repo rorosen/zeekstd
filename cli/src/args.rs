@@ -298,6 +298,9 @@ pub struct ListArgs {
     #[arg(short, long, action)]
     pub detail: bool,
 
+    #[arg(long)]
+    pub show_padding: bool,
+
     /// The format of the seek table.
     #[arg(long, default_value = "foot")]
     pub seek_table_format: SeekTableFormat,
