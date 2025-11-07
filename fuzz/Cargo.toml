@@ -1,0 +1,28 @@
+[package]
+name = "zeekstd-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.zeekstd]
+path = "../lib"
+
+[[bin]]
+name = "fuzz_roundtrip_basic"
+path = "fuzz_targets/fuzz_roundtrip_basic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_roundtrip_seek"
+path = "fuzz_targets/fuzz_roundtrip_seek.rs"
+test = false
+doc = false
+bench = false
