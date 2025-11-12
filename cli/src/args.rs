@@ -8,7 +8,7 @@ use zeekstd::{CompressionLevel, SeekTable, seek_table};
 // 128 MiB
 const MMAP_THRESHOLD: u64 = 0x0010_0000;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct ByteValue(u32);
 
 impl ByteValue {
@@ -178,6 +178,9 @@ pub struct CompressArgs {
     #[arg(long, default_value = "uncompressed")]
     pub frame_size_policy: FrameSizePolicy,
 
+    #[arg(long)]
+    pub align: Option<ByteValue>,
+
     /// Provide a reference point for Zstandard's diff engine.
     #[arg(long)]
     pub patch_from: Option<PathBuf>,
@@ -294,6 +297,9 @@ pub struct ListArgs {
     /// Detailed listing of individual frames, implied when frame boundaries are specified.
     #[arg(short, long, action)]
     pub detail: bool,
+
+    #[arg(long)]
+    pub show_padding: bool,
 
     /// The format of the seek table.
     #[arg(long, default_value = "foot")]

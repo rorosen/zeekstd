@@ -35,6 +35,7 @@ impl<W> Compressor<'_, W> {
 
         let encoder = EncodeOptions::with_cctx(cctx)
             .frame_size_policy(args.to_frame_size_policy())
+            .align(args.align.map(|x| x.as_u32()))
             .checksum_flag(!args.no_checksum)
             .compression_level(args.compression_level)
             .into_encoder(writer)

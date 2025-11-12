@@ -7,7 +7,9 @@ use zstd_safe::{
 
 #[cfg(feature = "std")]
 use crate::seek_table::Format;
-use crate::{SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result};
+use crate::{
+    SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result, seek_table::SKIPPABLE_MAGIC_NUMBER,
+};
 
 // Constant value always can be casted
 const MAX_FRAME_SIZE: u32 = SEEKABLE_MAX_FRAME_SIZE as u32;
@@ -110,6 +112,7 @@ impl EpilogueProgress {
 pub struct EncodeOptions<'a> {
     cctx: CCtx<'a>,
     frame_policy: FrameSizePolicy,
+    alignment: Option<u32>,
     checksum_flag: bool,
     compression_level: CompressionLevel,
 }
@@ -143,6 +146,7 @@ impl<'a> EncodeOptions<'a> {
         Self {
             cctx,
             frame_policy: FrameSizePolicy::default(),
+            alignment: None,
             checksum_flag: false,
             compression_level: CompressionLevel::default(),
         }
@@ -157,6 +161,12 @@ impl<'a> EncodeOptions<'a> {
     /// Sets a [`FrameSizePolicy`].
     pub fn frame_size_policy(mut self, policy: FrameSizePolicy) -> Self {
         self.frame_policy = policy;
+        self
+    }
+
+    /// Sets the frame alignment
+    pub fn align(mut self, alignment: Option<u32>) -> Self {
+        self.alignment = alignment;
         self
     }
 
@@ -266,6 +276,9 @@ impl<'a> EncodeOptions<'a> {
 pub struct RawEncoder<'a> {
     cctx: CCtx<'a>,
     frame_policy: FrameSizePolicy,
+    alignment: u32,
+    total_bytes_written: usize,
+    fill_zero: usize,
     frame_c_size: u32,
     frame_d_size: u32,
     seek_table: SeekTable,
@@ -286,6 +299,9 @@ impl<'a> RawEncoder<'a> {
         Ok(Self {
             cctx: opts.cctx,
             frame_policy: opts.frame_policy,
+            alignment: opts.alignment.unwrap_or(1),
+            total_bytes_written: 0,
+            fill_zero: 0,
             frame_c_size: 0,
             frame_d_size: 0,
             seek_table: SeekTable::new(),
@@ -314,6 +330,17 @@ impl<'a> RawEncoder<'a> {
         output: &mut [u8],
         prefix: Option<&'b [u8]>,
     ) -> Result<CompressionProgress> {
+        let progress = self.compress_with_prefix_(input, output, prefix)?;
+        self.total_bytes_written += progress.out_progress;
+        Ok(progress)
+    }
+
+    fn compress_with_prefix_<'b: 'a>(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+        prefix: Option<&'b [u8]>,
+    ) -> Result<CompressionProgress> {
         if self.is_frame_complete() {
             let mut out_progress = 0;
             while out_progress < output.len() {
@@ -323,34 +350,53 @@ impl<'a> RawEncoder<'a> {
                     break;
                 }
             }
+            return Ok(CompressionProgress::new(0, out_progress));
+        }
 
-            Ok(CompressionProgress::new(0, out_progress))
-        } else {
-            let limit = input.len().min(self.remaining_frame_size());
-            let mut in_buf = InBuffer::around(&input[..limit]);
-            let mut out_buf = OutBuffer::around(output);
-            // Reference prefix at the beginning of a frame
-            // TODO: chain when stable
-            if let Some(pref) = prefix {
-                if self.frame_d_size == 0 {
-                    self.cctx.ref_prefix(pref)?;
+        if self.fill_zero > 0 {
+            let out_progress = self.fill_zero.min(output.len());
+            self.fill_zero -= out_progress;
+            return Ok(CompressionProgress::new(0, out_progress));
+        }
+
+        if self.frame_c_size == 0 {
+            match self.total_bytes_written % self.alignment as usize {
+                0 => (),
+                r => {
+                    let mut padding = self.alignment as usize - r;
+                    if padding < 8 {
+                        padding += self.alignment as usize
+                    }
+                    let out_progress = self.add_padding(output, padding)?;
+                    return Ok(CompressionProgress::new(0, out_progress));
                 }
             }
-
-            while in_buf.pos() < limit && out_buf.pos() < out_buf.capacity() {
-                self.cctx.compress_stream2(
-                    &mut out_buf,
-                    &mut in_buf,
-                    ZSTD_EndDirective::ZSTD_e_continue,
-                )?;
-            }
-
-            // Casting should always be fine
-            self.frame_c_size += out_buf.pos() as u32;
-            self.frame_d_size += in_buf.pos() as u32;
-
-            Ok(CompressionProgress::new(in_buf.pos(), out_buf.pos()))
         }
+
+        let limit = input.len().min(self.remaining_frame_size());
+        let mut in_buf = InBuffer::around(&input[..limit]);
+        let mut out_buf = OutBuffer::around(output);
+        // Reference prefix at the beginning of a frame
+        // TODO: chain when stable
+        if let Some(pref) = prefix {
+            if self.frame_d_size == 0 {
+                self.cctx.ref_prefix(pref)?;
+            }
+        }
+
+        while in_buf.pos() < limit && out_buf.pos() < out_buf.capacity() {
+            self.cctx.compress_stream2(
+                &mut out_buf,
+                &mut in_buf,
+                ZSTD_EndDirective::ZSTD_e_continue,
+            )?;
+        }
+
+        // Casting should always be fine
+        self.frame_c_size += out_buf.pos() as u32;
+        self.frame_d_size += in_buf.pos() as u32;
+
+        Ok(CompressionProgress::new(in_buf.pos(), out_buf.pos()))
     }
 }
 
@@ -469,6 +515,19 @@ impl RawEncoder<'_> {
 
         // If we get here the frame is complete
         Ok(EpilogueProgress::new(out_buf.pos(), 0))
+    }
+
+    pub fn add_padding(&mut self, output: &mut [u8], padding: usize) -> Result<usize> {
+        assert!(padding >= 8);
+        if output.len() < 8 {
+            return Ok(0);
+        }
+        let zeroes = padding as u32 - 8;
+        output[0..4].copy_from_slice(&SKIPPABLE_MAGIC_NUMBER.to_le_bytes());
+        output[4..8].copy_from_slice(&zeroes.to_le_bytes());
+        self.fill_zero = zeroes as usize;
+        self.seek_table.log_frame(padding as u32, 0)?;
+        Ok(8)
     }
 
     /// Returns a reference to the internal [`SeekTable`].

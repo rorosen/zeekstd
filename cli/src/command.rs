@@ -248,6 +248,7 @@ impl Command {
                     start_frame: args.from_frame,
                     end_frame,
                     detail: args.detail,
+                    show_padding: args.show_padding,
                 };
 
                 Executor {
@@ -284,6 +285,7 @@ enum ExecMode<'a> {
         start_frame: Option<u32>,
         end_frame: Option<u32>,
         detail: bool,
+        show_padding: bool,
     },
 }
 
@@ -346,11 +348,18 @@ impl Executor<'_> {
                 start_frame,
                 end_frame,
                 detail,
+                show_padding,
             } => {
-                if start_frame.is_none() && end_frame.is_none() && !detail {
+                if start_frame.is_none() && end_frame.is_none() && !detail && !show_padding {
                     list_summarize(&seek_table, &self.in_path, self.byte_fmt);
                 } else {
-                    list_frames(&seek_table, start_frame, end_frame, self.byte_fmt)?;
+                    list_frames(
+                        &seek_table,
+                        start_frame,
+                        end_frame,
+                        self.byte_fmt,
+                        show_padding,
+                    )?;
                 }
             }
         }
@@ -423,6 +432,7 @@ fn list_frames(
     start_frame: Option<u32>,
     end_frame: Option<u32>,
     byte_fmt: fn(u64) -> String,
+    show_padding: bool,
 ) -> Result<()> {
     use std::fmt::Write as _;
 
@@ -440,15 +450,19 @@ fn list_frames(
 
     let mut cnt = 0;
     for n in start..=end {
-        let comp = (byte_fmt)(st.frame_size_comp(n)?);
-        let uncomp = (byte_fmt)(st.frame_size_decomp(n)?);
-        let comp_off = (byte_fmt)(st.frame_start_comp(n)?);
-        let uncomp_off = (byte_fmt)(st.frame_start_decomp(n)?);
+        let n_uncomp = st.frame_size_decomp(n)?;
 
-        writeln!(
-            &mut buf,
-            "{n: <15} {comp: <15} {uncomp: <15} {comp_off: <20} {uncomp_off: <20}",
-        )?;
+        if n_uncomp > 0 || show_padding {
+            let comp = (byte_fmt)(st.frame_size_comp(n)?);
+            let uncomp = (byte_fmt)(n_uncomp);
+            let comp_off = (byte_fmt)(st.frame_start_comp(n)?);
+            let uncomp_off = (byte_fmt)(st.frame_start_decomp(n)?);
+
+            writeln!(
+                &mut buf,
+                "{n: <15} {comp: <15} {uncomp: <15} {comp_off: <20} {uncomp_off: <20}",
+            )?;
+        }
 
         cnt += 1;
         if cnt == 100 {

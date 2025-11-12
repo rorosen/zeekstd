@@ -86,7 +86,7 @@ macro_rules! write_integrity {
 /// The size of each frame entry in the seek table.
 const SIZE_PER_FRAME: usize = 8;
 /// The skippable magic number of the skippable frame containing the seek table.
-const SKIPPABLE_MAGIC_NUMBER: u32 = zstd_safe::zstd_sys::ZSTD_MAGIC_SKIPPABLE_START | 0xE;
+pub const SKIPPABLE_MAGIC_NUMBER: u32 = zstd_safe::zstd_sys::ZSTD_MAGIC_SKIPPABLE_START | 0xE;
 
 struct Frame {
     c_size: u32,
