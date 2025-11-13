@@ -14,15 +14,15 @@ libfuzzer-sys = "0.4"
 path = "../lib"
 
 [[bin]]
-name = "fuzz_roundtrip_basic"
-path = "fuzz_targets/fuzz_roundtrip_basic.rs"
+name = "roundtrip_basic"
+path = "fuzz_targets/roundtrip_basic.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "fuzz_roundtrip_seek"
-path = "fuzz_targets/fuzz_roundtrip_seek.rs"
+name = "roundtrip_seek"
+path = "fuzz_targets/roundtrip_seek.rs"
 test = false
 doc = false
 bench = false
