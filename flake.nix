@@ -12,6 +12,10 @@
       url = "github:edolstra/flake-compat";
       flake = false;
     };
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -26,9 +30,7 @@
       perSystem =
         {
           config,
-          system,
           pkgs,
-          lib,
           ...
         }:
         {
@@ -54,11 +56,23 @@
             );
           };
 
-          devShells.default = pkgs.mkShell {
-            packages = [
-              pkgs.cargo-edit
-              pkgs.cargo-msrv
-            ];
+          devShells = {
+            default = pkgs.mkShell {
+              packages = [
+                pkgs.cargo-edit
+                pkgs.cargo-msrv
+              ];
+            };
+            fuzz = pkgs.mkShell {
+              packages =
+                let
+                  extended = pkgs.extend inputs.rust-overlay.overlays.default;
+                in
+                [
+                  extended.cargo-fuzz
+                  extended.rust-bin.nightly.latest.default
+                ];
+            };
           };
         };
     };

@@ -95,6 +95,19 @@ fn main() -> zeekstd::Result<()> {
 }
 ```
 
+## Fuzzing
+
+Run `nix develop .#fuzz` to enter a shell with a nightly compiler and `cargo-fuzz` installed.
+Consequently, run a fuzzing target with `cargo fuzz run <target>` where `<target>` is the name of a
+bin in `fuzz/Cargo.toml`.
+
+Alternatively, if you don't use Nix, install `cargo-fuzz` and a nightly compiler manually.
+
+```shell
+cargo install cargo-fuzz
+rustup default nightly
+```
+
 ## CLI
 
 This repo also contains a [CLI tool](./cli) that uses the library.
