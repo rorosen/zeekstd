@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - name: Build lib
       run: cargo build -p zeekstd --verbose
     - name: Build lib no_std
