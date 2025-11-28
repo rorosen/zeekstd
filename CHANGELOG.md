@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [cli]
+
+### Fixed
+
+- Print raw progress bytes if `--raw-bytes` is passed
+- Respect offset for progress bar
+- Accept `u64` range for `--to` argument
+
 ## [lib]
 
 ### Fixed

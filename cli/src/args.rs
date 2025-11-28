@@ -100,9 +100,14 @@ impl CliFlags {
     pub fn progress_bar(&self, in_path: Option<&str>) -> Option<ProgressBar> {
         (!self.quiet).then(|| {
             let len = in_path.and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
+            let template = if self.raw_bytes {
+                "{pos} of {len}"
+            } else {
+                "{binary_bytes} of {binary_total_bytes}"
+            };
+
             ProgressBar::with_draw_target(len, ProgressDrawTarget::stderr_with_hz(5)).with_style(
-                ProgressStyle::with_template("{binary_bytes} of {binary_total_bytes}")
-                    .expect("Static template always works"),
+                ProgressStyle::with_template(template).expect("Static template always works"),
             )
         })
     }
