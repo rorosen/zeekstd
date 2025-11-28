@@ -454,7 +454,7 @@ impl<S: Seekable> Decoder<'_, S> {
         &self.seek_table
     }
 
-    /// Gets the offset of this decoder.
+    /// Gets the current offset of this decoder.
     pub fn offset(&self) -> u64 {
         self.offset
     }

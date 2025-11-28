@@ -188,12 +188,14 @@ impl Parser {
     /// Only parses complete frames, returns the number of bytes consumed.
     fn parse_entries(&mut self, buf: &[u8]) -> usize {
         let mut pos: usize = 0;
+
         while self.entries.0.len() < self.num_frames {
             if pos + self.size_per_frame > buf.len() {
                 return pos;
             }
 
             self.log_entry();
+
             // Casting u32 to u64 is fine
             self.c_offset += read_le32!(buf, pos) as u64;
             self.d_offset += read_le32!(buf, pos + 4) as u64;
@@ -396,30 +398,37 @@ impl SeekTable {
         }
         parser.verify_skippable_header(&buf[..SKIPPABLE_HEADER_SIZE])?;
 
-        let mut consumed = SKIPPABLE_HEADER_SIZE;
+        let mut buf_start = SKIPPABLE_HEADER_SIZE;
         if matches!(format, Format::Head) {
-            consumed += SEEK_TABLE_INTEGRITY_SIZE;
+            buf_start += SEEK_TABLE_INTEGRITY_SIZE;
         }
-
-        // Drain the range we have already consumed (skippable header + integrity field)
-        buf.drain(..consumed);
-        let buf_len = buf.len();
 
         // Data that still has to be parsed
         let mut remaining =
             parser.seek_table_size - SKIPPABLE_HEADER_SIZE - SEEK_TABLE_INTEGRITY_SIZE;
 
+        let mut buf_end = read;
         loop {
-            let n = parser.parse_entries(&buf);
+            let n = parser.parse_entries(&buf[buf_start..buf_end]);
             remaining -= n;
             if remaining == 0 {
                 break;
             }
-            buf.copy_within(n.., 0);
-            if remaining > 0 && src.read(&mut buf[buf_len - n..buf_len.min(remaining)])? == 0 {
+
+            // Move remaining data (if any) to the beginning
+            let r = buf_start + n..buf_end;
+            let offset = r.len();
+            buf.copy_within(r, 0);
+
+            // Read in more data
+            let n = src.read(&mut buf[offset..])?;
+            if remaining > 0 && n == 0 {
                 // Error if src is EOF but there is data remaining
                 return Err(Error::zstd(ZSTD_ErrorCode::ZSTD_error_corruption_detected));
             }
+
+            buf_start = 0;
+            buf_end = offset + n;
         }
         parser.verify()?;
 
@@ -1182,7 +1191,7 @@ mod tests {
             fl.log_frame(i * 7, i * 13, Some(i)).unwrap();
         }
 
-        // frame size of zstd seekable is 12,  c_size, d_size, checksum each 4
+        // frame size of zstd seekable is 12,  c_size, d_size, checksum (each 4)
         let cap = SKIPPABLE_HEADER_SIZE + (num_frames * 12) as usize + SEEK_TABLE_INTEGRITY_SIZE;
         let mut buf = vec![0; cap];
         let mut out_buf = OutBuffer::around(&mut buf);
@@ -1215,12 +1224,29 @@ mod tests {
         assert_eq!(from_bytes, st);
     }
 
+    // Same as the std cycle test but with a BufReader. A BufReaders `read()` doesn't always fill
+    // the buffer with data, which led to undetected corrupted seek tables in the past.
+    #[cfg(feature = "std")]
+    fn test_serde_cycle_buf(format: Format, num_frames: u32) {
+        let st = seek_table(num_frames);
+        let mut ser = st.clone().into_format_serializer(format);
+        let mut buf = std::io::Cursor::new(Vec::with_capacity(ser.encoded_len()));
+        let n = std::io::copy(&mut ser, &mut buf).unwrap();
+        assert_eq!(n, ser.encoded_len() as u64);
+
+        let mut buf = std::io::BufReader::new(buf);
+        let from_bytes = SeekTable::from_seekable_format(&mut buf, format).unwrap();
+        assert_eq!(from_bytes, st);
+    }
+
     #[cfg(feature = "std")]
     proptest! {
         #[test]
-        fn serde_cycle_std(num_frames in 0..2048u32) {
+        fn serde_cycle_std(num_frames in 0..4096u32) {
             test_serde_cycle_std(Format::Head, num_frames);
             test_serde_cycle_std(Format::Foot, num_frames);
+            test_serde_cycle_buf(Format::Head, num_frames);
+            test_serde_cycle_buf(Format::Foot, num_frames);
         }
     }
 
@@ -1228,24 +1254,24 @@ mod tests {
     // edge cases.
     proptest! {
         #[test]
-        fn serialize(num_frames in 0..2048u32, buf_len in 1..64usize) {
+        fn serialize(num_frames in 0..4096u32, buf_len in 1..64usize) {
             test_serialize(Format::Head, num_frames, buf_len);
             test_serialize(Format::Foot, num_frames, buf_len);
         }
 
         #[test]
-        fn serde_cycle(num_frames in 0..2048u32) {
+        fn serde_cycle(num_frames in 0..4096u32) {
             test_serde_cycle(Format::Head, num_frames);
             test_serde_cycle(Format::Foot, num_frames);
         }
 
         #[test]
-        fn serialize_compatible_with_zstd_seekable(num_frames in 0..2048u32) {
+        fn serialize_compatible_with_zstd_seekable(num_frames in 0..4096u32) {
             test_serialize_compatible_with_zstd_seekable(num_frames);
         }
 
         #[test]
-        fn deserialize_compatible_with_zstd_seekable(num_frames in 1..2048u32) {
+        fn deserialize_compatible_with_zstd_seekable(num_frames in 0..4096u32) {
             test_deserialize_compatible_with_zstd_seekable(num_frames);
         }
     }
