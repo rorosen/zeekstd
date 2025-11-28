@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr};
 
-use anyhow::{Context, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use indicatif::ProgressStyle;
 use zeekstd::{CompressionLevel, SeekTable, seek_table};
@@ -9,10 +9,10 @@ use zeekstd::{CompressionLevel, SeekTable, seek_table};
 const MMAP_THRESHOLD: u64 = 0x0010_0000;
 
 #[derive(Debug, Clone)]
-pub struct ByteValue(u32);
+pub struct ByteValue(u64);
 
 impl ByteValue {
-    pub fn as_u32(&self) -> u32 {
+    pub fn as_u64(&self) -> u64 {
         self.0
     }
 }
@@ -20,15 +20,15 @@ impl ByteValue {
 impl FromStr for ByteValue {
     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self> {
         const ERRMSG: &str = "Byte value too large";
         let value: String = s.chars().take_while(char::is_ascii_digit).collect();
         let unit: String = s[value.len()..]
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        let value: u32 = value.parse()?;
 
+        let value: u64 = value.parse()?;
         let value = match unit.as_str() {
             "B" | "" => value,
             "K" | "kib" => value.checked_mul(1024).context(ERRMSG)?,
@@ -49,14 +49,14 @@ pub enum OffsetLimit {
 
 impl From<ByteValue> for OffsetLimit {
     fn from(value: ByteValue) -> Self {
-        Self::Value(value.0 as u64)
+        Self::Value(value.0)
     }
 }
 
 impl FromStr for OffsetLimit {
     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self> {
         let this = match s.to_lowercase().as_str() {
             "end" => Self::End,
             _ => Self::from(ByteValue::from_str(s)?),
@@ -75,7 +75,7 @@ pub enum LastFrame {
 impl FromStr for LastFrame {
     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self> {
         let this = match s.to_lowercase().as_str() {
             "end" => Self::End,
             _ => Self::Index(u32::from_str(s)?),
@@ -196,14 +196,16 @@ pub struct CompressArgs {
 }
 
 impl CompressArgs {
-    pub fn to_frame_size_policy(&self) -> zeekstd::FrameSizePolicy {
+    pub fn to_frame_size_policy(&self) -> Result<zeekstd::FrameSizePolicy> {
+        let frame_size: u32 = self
+            .frame_size
+            .as_u64()
+            .try_into()
+            .context("Frame size too big")?;
+
         match self.frame_size_policy {
-            FrameSizePolicy::Compressed => {
-                zeekstd::FrameSizePolicy::Compressed(self.frame_size.as_u32())
-            }
-            FrameSizePolicy::Uncompressed => {
-                zeekstd::FrameSizePolicy::Uncompressed(self.frame_size.as_u32())
-            }
+            FrameSizePolicy::Compressed => Ok(zeekstd::FrameSizePolicy::Compressed(frame_size)),
+            FrameSizePolicy::Uncompressed => Ok(zeekstd::FrameSizePolicy::Uncompressed(frame_size)),
         }
     }
 }
@@ -246,7 +248,7 @@ pub struct DecompressArgs {
 }
 
 impl DecompressArgs {
-    pub fn offset(&self, seek_table: &SeekTable) -> anyhow::Result<u64> {
+    pub fn offset(&self, seek_table: &SeekTable) -> Result<u64> {
         let offset = if let Some(index) = self.from_frame {
             seek_table.frame_start_decomp(index)?
         } else {
@@ -256,7 +258,7 @@ impl DecompressArgs {
         Ok(offset)
     }
 
-    pub fn offset_limit(&self, seek_table: &SeekTable) -> anyhow::Result<u64> {
+    pub fn offset_limit(&self, seek_table: &SeekTable) -> Result<u64> {
         let limit = if let Some(end) = &self.to_frame {
             match end {
                 LastFrame::End => seek_table.size_decomp(),

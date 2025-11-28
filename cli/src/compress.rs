@@ -25,6 +25,7 @@ impl<W> Compressor<'_, W> {
         bar: Option<ProgressBar>,
     ) -> Result<Self> {
         let cctx_err = |msg, c| anyhow!("{msg}: {}", zstd_safe::get_error_name(c));
+        let policy = args.to_frame_size_policy()?;
         let mut cctx = CCtx::try_create().context("Failed to create compression context")?;
 
         if let Some(len) = prefix_len {
@@ -36,7 +37,7 @@ impl<W> Compressor<'_, W> {
         }
 
         let encoder = EncodeOptions::with_cctx(cctx)
-            .frame_size_policy(args.to_frame_size_policy())
+            .frame_size_policy(policy)
             .checksum_flag(!args.no_checksum)
             .compression_level(args.compression_level)
             .into_encoder(writer)
