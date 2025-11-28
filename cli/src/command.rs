@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
-use indicatif::{HumanBytes, ProgressBar};
+use indicatif::{HumanBytes, ProgressBar, ProgressDrawTarget};
 use memmap2::Mmap;
 use zeekstd::SeekTable;
 
@@ -185,8 +185,23 @@ impl Command {
                     })
                     .transpose()
                     .context("Failed to create seek table file")?;
+                let progress_style = flags.progress_style();
+                let bar = if let Some(style) = progress_style {
+                    let in_len = in_path
+                        .as_ref()
+                        .and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
+                    Some(
+                        ProgressBar::with_draw_target(
+                            in_len,
+                            ProgressDrawTarget::stderr_with_hz(5),
+                        )
+                        .with_style(style),
+                    )
+                } else {
+                    None
+                };
                 let compressor =
-                    Compressor::new(&args, prefix_len, seek_table_file, new_writer()?)?;
+                    Compressor::new(&args, prefix_len, seek_table_file, new_writer()?, bar)?;
                 let mode = ExecMode::Compress {
                     reader,
                     compressor,
@@ -195,7 +210,6 @@ impl Command {
                     out_path: out_path
                         .and_then(|p| p.to_str().map(Into::into))
                         .unwrap_or("STDOUT".into()),
-                    bar: flags.progress_bar(in_path.as_deref()),
                 };
 
                 Executor {
@@ -210,7 +224,7 @@ impl Command {
                     .patch_apply
                     .as_ref()
                     .and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
-                let decompressor = Decompressor::new(&args, prefix_len)?;
+                let decompressor = Decompressor::new(&args, prefix_len, flags.progress_style())?;
                 let writer = new_writer()?;
 
                 let mode = ExecMode::Decompress {
@@ -218,7 +232,6 @@ impl Command {
                     writer,
                     prefix: args.patch_apply,
                     mmap_prefix: args.common.use_mmap(prefix_len),
-                    bar: flags.progress_bar(in_path.as_deref()),
                 };
 
                 Executor {
@@ -270,14 +283,12 @@ enum ExecMode<'a> {
         prefix: Option<PathBuf>,
         mmap_prefix: bool,
         out_path: String,
-        bar: Option<ProgressBar>,
     },
     Decompress {
         decompressor: Decompressor<'a>,
         writer: Box<dyn Write>,
         prefix: Option<PathBuf>,
         mmap_prefix: bool,
-        bar: Option<ProgressBar>,
     },
     List {
         seek_table: SeekTable,
@@ -304,12 +315,10 @@ impl Executor<'_> {
                 prefix,
                 mmap_prefix,
                 out_path,
-                bar,
             } => {
                 let prefix = Prefix::new(prefix, mmap_prefix)
                     .context("Failed to load prefix (patch) file")?;
-                let (read, written) =
-                    compressor.compress_reader(&mut reader, prefix.as_deref(), bar.as_ref())?;
+                let (read, written) = compressor.compress_reader(&mut reader, prefix.as_deref())?;
 
                 if !self.quiet {
                     eprintln!(
@@ -326,12 +335,10 @@ impl Executor<'_> {
                 mut writer,
                 prefix,
                 mmap_prefix,
-                bar,
             } => {
                 let prefix = Prefix::new(prefix, mmap_prefix)
                     .context("Failed to load prefix (patch) file")?;
-                let written =
-                    decompressor.decompress_into(&mut writer, prefix.as_deref(), bar.as_ref())?;
+                let written = decompressor.decompress_into(&mut writer, prefix.as_deref())?;
 
                 if !self.quiet {
                     eprintln!(

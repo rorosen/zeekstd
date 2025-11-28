@@ -13,6 +13,7 @@ use crate::args::CompressArgs;
 pub struct Compressor<'a, W> {
     encoder: Encoder<'a, W>,
     seek_table_file: Option<File>,
+    bar: Option<ProgressBar>,
 }
 
 impl<W> Compressor<'_, W> {
@@ -21,6 +22,7 @@ impl<W> Compressor<'_, W> {
         prefix_len: Option<u64>,
         seek_table_file: Option<File>,
         writer: W,
+        bar: Option<ProgressBar>,
     ) -> Result<Self> {
         let cctx_err = |msg, c| anyhow!("{msg}: {}", zstd_safe::get_error_name(c));
         let mut cctx = CCtx::try_create().context("Failed to create compression context")?;
@@ -43,6 +45,7 @@ impl<W> Compressor<'_, W> {
         Ok(Self {
             encoder,
             seek_table_file,
+            bar,
         })
     }
 }
@@ -52,7 +55,6 @@ impl<'a, W: Write> Compressor<'a, W> {
         mut self,
         reader: &mut R,
         prefix: Option<&'b [u8]>,
-        bar: Option<&ProgressBar>,
     ) -> Result<(u64, u64)> {
         let mut buf = vec![0; CCtx::in_size()];
         let mut bytes_read = 0;
@@ -63,8 +65,8 @@ impl<'a, W: Write> Compressor<'a, W> {
                 break;
             }
             bytes_read += limit as u64;
-            if let Some(b) = bar {
-                b.inc(limit as u64);
+            if let Some(bar) = &self.bar {
+                bar.inc(limit as u64);
             }
 
             let mut buf_pos = 0;
@@ -96,8 +98,8 @@ impl<'a, W: Write> Compressor<'a, W> {
                 .context("Failed to finish compression")?,
         };
 
-        if let Some(b) = bar {
-            b.finish_and_clear();
+        if let Some(bar) = &self.bar {
+            bar.finish_and_clear();
         }
         Ok((bytes_read, bytes_written))
     }

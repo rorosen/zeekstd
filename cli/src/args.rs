@@ -1,8 +1,8 @@
-use std::{fs, path::PathBuf, str::FromStr};
+use std::{path::PathBuf, str::FromStr};
 
 use anyhow::{Context, bail};
 use clap::{Parser, ValueEnum};
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use indicatif::ProgressStyle;
 use zeekstd::{CompressionLevel, SeekTable, seek_table};
 
 // 128 MiB
@@ -97,19 +97,18 @@ pub struct CliFlags {
 }
 
 impl CliFlags {
-    pub fn progress_bar(&self, in_path: Option<&str>) -> Option<ProgressBar> {
-        (!self.quiet).then(|| {
-            let len = in_path.and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
-            let template = if self.raw_bytes {
-                "{pos} of {len}"
-            } else {
-                "{binary_bytes} of {binary_total_bytes}"
-            };
+    pub fn progress_style(&self) -> Option<ProgressStyle> {
+        if self.quiet {
+            return None;
+        }
 
-            ProgressBar::with_draw_target(len, ProgressDrawTarget::stderr_with_hz(5)).with_style(
-                ProgressStyle::with_template(template).expect("Static template always works"),
-            )
-        })
+        let template = if self.raw_bytes {
+            "{pos} of {len}"
+        } else {
+            "{binary_bytes} of {binary_total_bytes}"
+        };
+
+        Some(ProgressStyle::with_template(template).expect("Static template always works"))
     }
 }
 
