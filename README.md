@@ -13,16 +13,16 @@
 Rust implementation of the Zstandard Seekable Format.
 
 The seekable format splits compressed data into a series of independent frames, each compressed
-individually, so that decompression of a section in the middle of an archive only requires zstd to
-decompress at most a frame's worth of extra data, instead of the entire archive.
+individually, so that decompression of a section in the middle of a compressed file only requires
+zstd to decompress at most a frame's worth of extra data, instead of the entire file.
 
 The format also specifies a seek table that allows seekable decoders to efficiently jump to
 requested data. The seek table is placed in a [Zstandard Skippable Frame] and can be appended to the
-end of a seekable archive or written to a standalone file.
+end of a seekable compressed file or written to a standalone file.
 
-Any compliant zstd decoder can restore the original content of a seekable archive by decompressing
-it. As the seek table is placed in a skippable frame, it is simply ignored by decoders that are
-unaware of the seekable format.
+Any compliant zstd decoder can restore the original content of a seekable compressed file by
+decompressing it. As the seek table is placed in a skippable frame, it is simply ignored by decoders
+that are unaware of the seekable format.
 
 Zeekstd makes additions to the seekable format by implementing an updated version of the
 [specification][zeekstd_spec], however, it is fully compatible with the

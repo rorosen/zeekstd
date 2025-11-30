@@ -240,7 +240,7 @@ pub enum Format {
     Foot,
 }
 
-/// Holds information of the frames of a seekable archive.
+/// Holds information of the frames of a seekable compressed file.
 ///
 /// The `SeekTable` contains the frame boundaries of a seekable compressed file. It allows
 /// decompressors to efficiently jump to the frames that contain requested data. The seek table is
@@ -293,7 +293,7 @@ impl SeekTable {
         Self { entries }
     }
 
-    /// Parses the seek table from a seekable archive.
+    /// Parses the seek table from a seekable input.
     ///
     /// This only works if the seek table is in [`Foot`] format.
     ///
@@ -339,7 +339,7 @@ impl SeekTable {
         Self::from_seekable_format(src, Format::Foot)
     }
 
-    /// Parses the seek table from a seekable archive, expecting the given `format`.
+    /// Parses the seek table from a seekable input, expecting the given `format`.
     ///
     /// # Errors
     ///
@@ -806,7 +806,7 @@ impl SeekTable {
             .unwrap_or(0)
     }
 
-    /// The compressed size of the seekable archive.
+    /// The compressed size of the seekable file.
     ///
     /// This is equivalent to calling [`Self::frame_end_comp`] with the index of the last frame.
     ///
@@ -832,7 +832,7 @@ impl SeekTable {
             .c_offset
     }
 
-    /// The decompressed size of the seekable archive.
+    /// The decompressed size of the seekable file.
     ///
     /// This is equivalent to calling [`Self::frame_end_decomp`] with the index of the last frame.
     ///

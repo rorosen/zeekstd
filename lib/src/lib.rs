@@ -2,9 +2,9 @@
 //! the [specification].
 //!
 //! The seekable format splits compressed data into a series of independent "frames", each
-//! compressed individually, so that decompression of a section in the middle of an archive only
-//! requires zstd to decompress at most a frame's worth of extra data, instead of the entire
-//! archive.
+//! compressed individually, so that decompression of a section in the middle of a compressed file
+//! only requires zstd to decompress at most a frame's worth of extra data, instead of the entire
+//! file.
 //!
 //! The frames are appended, so that the decompression of the entire payload still regenerates the
 //! original content, using any compliant zstd decoder.
@@ -13,10 +13,10 @@
 //!
 //! # Getting Started
 //!
-//! - The [`RawEncoder`] and [`Encoder`] compress data into seekable archives.
+//! - The [`RawEncoder`] and [`Encoder`] compress data.
 //! - The [`Decoder`] performs seekable decompression.
-//! - The [`SeekTable`] holds information of the frames of a seekable archive, it gets created and
-//!   updated automatically during compression.
+//! - The [`SeekTable`] holds information of the frames of a seekable comressed file, it gets
+//!   created and updated automatically during compression.
 //!
 //! [specification]: https://github.com/rorosen/zeekstd/blob/main/seekable_format.md
 //! [zstd_safe]: https://docs.rs/zstd-safe/latest/zstd_safe/
@@ -50,7 +50,7 @@ pub use zstd_safe::CompressionLevel;
 
 /// The magic number of the seek table integrity field.
 pub const SEEKABLE_MAGIC_NUMBER: u32 = 0x8F92_EAB1;
-/// The maximum number of frames in a seekable archive.
+/// The maximum number of frames in a seekable compressed file.
 pub const SEEKABLE_MAX_FRAMES: u32 = 0x0800_0000;
 /// The size of the seek table integrity field.
 pub const SEEK_TABLE_INTEGRITY_SIZE: usize = 9;
