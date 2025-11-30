@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [lib]
+
+### Fixed
+
+- Fix a seek table decoding bug where it gets populated with wrong data when the read buffer gets
+  only partially filled.
+
 ## [0.4.2-cli]
 
 ### Changed
