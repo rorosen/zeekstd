@@ -32,16 +32,6 @@ Zeekstd makes additions to the seekable format by implementing an updated versio
 [zeekstd_spec]: ./seekable_format.md
 [zstd_spec]: <https://github.com/facebook/zstd/blob/dev/contrib/seekable_format/zstd_seekable_compression_format.md>
 
-## Finding the Right Frame Size
-
-Every frame adds a small amount of metadata depending on compression parameters (e.g. whether frame
-checksums are used) and increases the size of the seek table. Hence, small frame sizes impact the
-compression ratio negatively, but also reduce decompression cost when requesting small segments of
-data, so there is a balance to find.
-
-Very small frame sizes below a few KiB should be avoided in general, as they can hurt the
-compression ratio notably.
-
 ## Compression
 
 A seekable `Encoder` will start new frames automatically at 2MiB of uncompressed data. See
@@ -95,6 +85,20 @@ fn main() -> zeekstd::Result<()> {
 }
 ```
 
+## CLI
+
+This repo also contains a [CLI tool](./cli) that uses the library.
+
+## Finding the Right Frame Size
+
+Every frame adds a small amount of metadata depending on compression parameters (e.g. whether frame
+checksums are used) and increases the size of the seek table. Hence, small frame sizes impact the
+compression ratio negatively, but also reduce decompression cost when requesting small segments of
+data, so there is a balance to find.
+
+Very small frame sizes below a few KiB should be avoided in general, as they can hurt the
+compression ratio notably.
+
 ## Fuzzing
 
 Run `nix develop .#fuzz` to enter a shell with a nightly compiler and `cargo-fuzz` installed.
@@ -107,10 +111,6 @@ Alternatively, if you don't use Nix, install `cargo-fuzz` and a nightly compiler
 cargo install cargo-fuzz
 rustup default nightly
 ```
-
-## CLI
-
-This repo also contains a [CLI tool](./cli) that uses the library.
 
 ## License
 
