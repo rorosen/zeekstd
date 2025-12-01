@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [cli]
+
+### Fixed
+
+- Print raw progress bytes if `--raw-bytes` is passed
+- Respect offset for progress bar
+- Accept `u64` range for `--to` argument
+
+## [lib]
+
+### Fixed
+
+- Fix a seek table decoding bug where it gets populated with wrong data when the read buffer gets
+  only partially filled.
+
 ## [0.4.2-cli]
 
 ### Changed

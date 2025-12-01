@@ -13,16 +13,16 @@
 Rust implementation of the Zstandard Seekable Format.
 
 The seekable format splits compressed data into a series of independent frames, each compressed
-individually, so that decompression of a section in the middle of an archive only requires zstd to
-decompress at most a frame's worth of extra data, instead of the entire archive.
+individually, so that decompression of a section in the middle of a compressed file only requires
+zstd to decompress at most a frame's worth of extra data, instead of the entire file.
 
 The format also specifies a seek table that allows seekable decoders to efficiently jump to
 requested data. The seek table is placed in a [Zstandard Skippable Frame] and can be appended to the
-end of a seekable archive or written to a standalone file.
+end of a seekable compressed file or written to a standalone file.
 
-Any compliant zstd decoder can restore the original content of a seekable archive by decompressing
-it. As the seek table is placed in a skippable frame, it is simply ignored by decoders that are
-unaware of the seekable format.
+Any compliant zstd decoder can restore the original content of a seekable compressed file by
+decompressing it. As the seek table is placed in a skippable frame, it is simply ignored by decoders
+that are unaware of the seekable format.
 
 Zeekstd makes additions to the seekable format by implementing an updated version of the
 [specification][zeekstd_spec], however, it is fully compatible with the
@@ -31,16 +31,6 @@ Zeekstd makes additions to the seekable format by implementing an updated versio
 [Zstandard Skippable Frame]: https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md#skippable-frames
 [zeekstd_spec]: ./seekable_format.md
 [zstd_spec]: <https://github.com/facebook/zstd/blob/dev/contrib/seekable_format/zstd_seekable_compression_format.md>
-
-## Finding the Right Frame Size
-
-Every frame adds a small amount of metadata depending on compression parameters (e.g. whether frame
-checksums are used) and increases the size of the seek table. Hence, small frame sizes impact the
-compression ratio negatively, but also reduce decompression cost when requesting small segments of
-data, so there is a balance to find.
-
-Very small frame sizes below a few KiB should be avoided in general, as they can hurt the
-compression ratio notably.
 
 ## Compression
 
@@ -95,6 +85,20 @@ fn main() -> zeekstd::Result<()> {
 }
 ```
 
+## CLI
+
+This repo also contains a [CLI tool](./cli) that uses the library.
+
+## Finding the Right Frame Size
+
+Every frame adds a small amount of metadata depending on compression parameters (e.g. whether frame
+checksums are used) and increases the size of the seek table. Hence, small frame sizes impact the
+compression ratio negatively, but also reduce decompression cost when requesting small segments of
+data, so there is a balance to find.
+
+Very small frame sizes below a few KiB should be avoided in general, as they can hurt the
+compression ratio notably.
+
 ## Fuzzing
 
 Run `nix develop .#fuzz` to enter a shell with a nightly compiler and `cargo-fuzz` installed.
@@ -107,10 +111,6 @@ Alternatively, if you don't use Nix, install `cargo-fuzz` and a nightly compiler
 cargo install cargo-fuzz
 rustup default nightly
 ```
-
-## CLI
-
-This repo also contains a [CLI tool](./cli) that uses the library.
 
 ## License
 

@@ -1,7 +1,7 @@
 use std::{fs::File, io::Write};
 
 use anyhow::{Context, Result, anyhow};
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use zeekstd::{DecodeOptions, Decoder, SeekTable};
 use zstd_safe::{DCtx, DParameter};
 
@@ -9,10 +9,15 @@ use crate::args::DecompressArgs;
 
 pub struct Decompressor<'a> {
     decoder: Decoder<'a, File>,
+    bar: Option<ProgressBar>,
 }
 
 impl Decompressor<'_> {
-    pub fn new(args: &DecompressArgs, prefix_len: Option<u64>) -> Result<Self> {
+    pub fn new(
+        args: &DecompressArgs,
+        prefix_len: Option<u64>,
+        progress_style: Option<ProgressStyle>,
+    ) -> Result<Self> {
         let mut src = File::open(&args.input_file).context("Failed to open input file")?;
         let seek_table = match &args.common.seek_table_file {
             Some(path) => {
@@ -30,6 +35,20 @@ impl Decompressor<'_> {
         let offset_limit = args
             .offset_limit(&seek_table)
             .context("Failed to get decompression offset limit")?;
+
+        let bar = if let Some(style) = progress_style {
+            let bar = ProgressBar::with_draw_target(
+                Some(offset_limit),
+                ProgressDrawTarget::stderr_with_hz(5),
+            )
+            .with_style(style);
+
+            bar.set_position(offset);
+
+            Some(bar)
+        } else {
+            None
+        };
 
         let mut dctx = DCtx::try_create().context("Failed to create decompression context")?;
         if let Some(len) = prefix_len {
@@ -50,7 +69,7 @@ impl Decompressor<'_> {
             .into_decoder()
             .context("Failed to create decoder")?;
 
-        Ok(Self { decoder })
+        Ok(Self { decoder, bar })
     }
 }
 
@@ -59,7 +78,6 @@ impl<'a> Decompressor<'a> {
         mut self,
         writer: &mut W,
         prefix: Option<&'b [u8]>,
-        bar: Option<&ProgressBar>,
     ) -> Result<u64> {
         let mut buf = vec![0; DCtx::out_size()];
         let mut buf_pos = 0;
@@ -73,8 +91,8 @@ impl<'a> Decompressor<'a> {
             if n == 0 {
                 break;
             }
-            if let Some(b) = bar {
-                b.inc(n as u64);
+            if let Some(bar) = &self.bar {
+                bar.inc(n as u64);
             }
             buf_pos += n;
             if buf_pos == buf.len() {
@@ -85,12 +103,14 @@ impl<'a> Decompressor<'a> {
                 buf_pos = 0;
             }
         }
+
         writer
             .write_all(&buf[..buf_pos])
             .context("Failed to write decompressed data")?;
         written += buf_pos as u64;
-        if let Some(b) = bar {
-            b.finish_and_clear();
+
+        if let Some(bar) = &self.bar {
+            bar.finish_and_clear();
         }
 
         Ok(written)

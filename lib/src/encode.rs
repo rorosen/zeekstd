@@ -214,8 +214,8 @@ impl<'a> EncodeOptions<'a> {
 ///
 /// # Examples
 ///
-/// Creates a seekable archive using a `RawEncoder`. See the [`Encoder`], for a more approachable
-/// interface.
+/// Creates seekable compressed files using a `RawEncoder`. See the [`Encoder`], for a more
+/// approachable interface.
 ///
 /// ```
 /// use zeekstd::RawEncoder;
@@ -551,7 +551,7 @@ impl RawEncoder<'_> {
 ///
 /// # Examples
 ///
-/// Creates a seekable archive using an `Encoder`.
+/// Creates a seekable compressed file using an `Encoder`.
 ///
 /// ```no_run
 /// use std::{fs::File, io};
