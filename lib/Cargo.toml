@@ -14,6 +14,7 @@ readme.workspace = true
 zstd-safe = { workspace = true }
 
 [dev-dependencies]
+criterion = "0.8.0"
 proptest = "1.7.0"
 
 [dev-dependencies.zstd-safe]
@@ -31,3 +32,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "compress"
+harness = false
+
+[[bench]]
+name = "decompress"
+harness = false
