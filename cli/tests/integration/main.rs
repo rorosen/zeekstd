@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo::cargo_bin_cmd};
 use tempfile::{NamedTempFile, TempDir};
 
 const FRAME_SIZES: [&str; 5] = ["10", "123", "3K", "2M", "1G"];
@@ -14,8 +14,7 @@ fn test_input() -> PathBuf {
 }
 
 fn compress_test_input(out_path: &Path, frame_size: &str) {
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(test_input())
         .arg("--output-file")
@@ -30,8 +29,7 @@ fn compress_test_input(out_path: &Path, frame_size: &str) {
 fn verify_compressed_file(path: &Path) {
     let output = NamedTempFile::new().unwrap();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("decompress")
         .arg(path)
         .arg("--output-file")
@@ -57,8 +55,7 @@ fn test_cycle_stdin(frame_size: &str) {
     let dir = TempDir::new().unwrap();
     let compressed_path = dir.path().join("test.zst");
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg("--output-file")
         .arg(&compressed_path)
@@ -72,8 +69,7 @@ fn test_cycle_stdin(frame_size: &str) {
 }
 
 fn test_cycle_stdout(frame_size: &str) {
-    let out = Command::cargo_bin("zeekstd")
-        .unwrap()
+    let out = cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(test_input())
         .arg("--stdout")
@@ -93,8 +89,7 @@ fn test_cycle_stdout(frame_size: &str) {
 }
 
 fn test_cycle_stdin_to_stdout(frame_size: &str) {
-    let out = Command::cargo_bin("zeekstd")
-        .unwrap()
+    let out = cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg("--stdout")
         .arg("--frame-size")
@@ -117,8 +112,7 @@ fn test_cycle_with_separate_seek_table(frame_size: &str) {
     let compressed_path = dir.path().join("seekable.zst");
     let seek_table_path = dir.path().join("seek_table");
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(test_input())
         .arg("--output-file")
@@ -132,8 +126,7 @@ fn test_cycle_with_separate_seek_table(frame_size: &str) {
 
     let decompressed = NamedTempFile::new().unwrap();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("decompress")
         .arg(&compressed_path)
         .arg("--seek-table-file")
@@ -191,8 +184,7 @@ fn derive_out_name() {
     let mut input = NamedTempFile::new_in(dir.path()).unwrap();
     input.write_all(b"foo").unwrap();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(input.path())
         .assert()
@@ -205,8 +197,7 @@ fn derive_out_name() {
 fn do_not_overwrite_existing_output_file() {
     let output = NamedTempFile::new().unwrap();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(test_input())
         .arg("--output-file")
@@ -214,8 +205,7 @@ fn do_not_overwrite_existing_output_file() {
         .assert()
         .failure();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg("--output-file")
         .arg(output.path())
@@ -230,8 +220,7 @@ fn do_not_overwrite_existing_seek_table_file() {
     let out_path = dir.path().join("bar.zst");
     let seek_table = NamedTempFile::new().unwrap();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(test_input())
         .arg("--output-file")
@@ -241,8 +230,7 @@ fn do_not_overwrite_existing_seek_table_file() {
         .assert()
         .failure();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg("--output-file")
         .arg(&out_path)
@@ -257,8 +245,7 @@ fn do_not_overwrite_existing_seek_table_file() {
 fn force_overwrite_existing_file() {
     let output = NamedTempFile::new().unwrap();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(test_input())
         .arg("--output-file")
@@ -267,8 +254,7 @@ fn force_overwrite_existing_file() {
         .assert()
         .success();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg("--output-file")
         .arg(output.path())
@@ -283,8 +269,7 @@ fn do_not_create_out_file_if_input_file_does_not_exist() {
     let dir = TempDir::new().unwrap();
     let out_path = dir.path().join("bar.zst");
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(dir.path().join("foo"))
         .arg("--output-file")
@@ -301,8 +286,7 @@ fn decompress_frames() {
     let seekable = NamedTempFile::new().unwrap();
     compress_test_input(seekable.path(), &frame_size.to_string());
 
-    let mut first_frame = Command::cargo_bin("zeekstd")
-        .unwrap()
+    let mut first_frame = cargo_bin_cmd!("zeekstd")
         .arg("decompress")
         .arg(seekable.path())
         .arg("-c")
@@ -318,8 +302,7 @@ fn decompress_frames() {
 
     assert_eq!(first_frame.len(), frame_size.try_into().unwrap());
 
-    let mut last_frames = Command::cargo_bin("zeekstd")
-        .unwrap()
+    let mut last_frames = cargo_bin_cmd!("zeekstd")
         .arg("decompress")
         .arg(seekable.path())
         .arg("-c")
@@ -343,8 +326,7 @@ fn decompress_frames_separate_seek_table() {
     let seekable = NamedTempFile::new().unwrap();
     let seek_table = NamedTempFile::new().unwrap();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(test_input())
         .arg("--frame-size")
@@ -357,8 +339,7 @@ fn decompress_frames_separate_seek_table() {
         .assert()
         .success();
 
-    let first_frame = Command::cargo_bin("zeekstd")
-        .unwrap()
+    let first_frame = cargo_bin_cmd!("zeekstd")
         .arg("decompress")
         .arg(seekable.path())
         .arg("--seek-table-file")
@@ -388,8 +369,7 @@ fn decompress_frame_index_out_of_range() {
     let seekable = NamedTempFile::new().unwrap();
     compress_test_input(seekable.path(), &frame_size.to_string());
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("decompress")
         .arg(seekable.path())
         .arg("--from-frame")
@@ -397,8 +377,7 @@ fn decompress_frame_index_out_of_range() {
         .assert()
         .failure();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("decompress")
         .arg(seekable.path())
         .arg("--from-frame")
@@ -418,8 +397,7 @@ fn decompress_between_offset_and_offset_limit() {
     let offset = frame_size + frame_size / 2;
     let offset_limit = 4 * frame_size + frame_size / 2;
 
-    let out = Command::cargo_bin("zeekstd")
-        .unwrap()
+    let out = cargo_bin_cmd!("zeekstd")
         .arg("decompress")
         .arg(seekable.path())
         .arg("-c")
@@ -446,8 +424,7 @@ fn list_seekable() {
     let seekable = NamedTempFile::new().unwrap();
     compress_test_input(seekable.path(), &frame_size.to_string());
 
-    let out = Command::cargo_bin("zeekstd")
-        .unwrap()
+    let out = cargo_bin_cmd!("zeekstd")
         .arg("list")
         .arg(seekable.path())
         .assert()
@@ -459,8 +436,7 @@ fn list_seekable() {
     // Expect two lines
     assert_eq!(2, out.iter().filter(|x| **x == b'\n').count());
 
-    let out = Command::cargo_bin("zeekstd")
-        .unwrap()
+    let out = cargo_bin_cmd!("zeekstd")
         .arg("list")
         .arg("--detail")
         .arg(seekable.path())
@@ -480,8 +456,7 @@ fn list_separate_seek_table() {
     let seekable = NamedTempFile::new().unwrap();
     let seek_table = NamedTempFile::new().unwrap();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("compress")
         .arg(test_input())
         .arg("--frame-size")
@@ -494,8 +469,7 @@ fn list_separate_seek_table() {
         .assert()
         .success();
 
-    Command::cargo_bin("zeekstd")
-        .unwrap()
+    cargo_bin_cmd!("zeekstd")
         .arg("list")
         .arg(seek_table.path())
         .arg("--seek-table-format")
