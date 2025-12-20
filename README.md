@@ -12,6 +12,11 @@
 
 Rust implementation of the Zstandard Seekable Format.
 
+- [Documentation](https://docs.rs/zeekstd)
+- [Changelog](/CHANGELOG.md)
+
+## About
+
 The seekable format splits compressed data into a series of independent frames, each compressed
 individually, so that decompression of a section in the middle of a compressed file only requires
 zstd to decompress at most a frame's worth of extra data, instead of the entire file.
