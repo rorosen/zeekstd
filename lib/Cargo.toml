@@ -14,8 +14,8 @@ readme.workspace = true
 zstd-safe = { workspace = true }
 
 [dev-dependencies]
-criterion = "0.8.0"
-proptest = "1.7.0"
+criterion = "0.8.1"
+proptest = "1.9.0"
 zstd = "0.13.3"
 
 [dev-dependencies.zstd-safe]
