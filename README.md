@@ -32,6 +32,30 @@ Zeekstd makes additions to the seekable format by implementing an updated versio
 [zeekstd_spec]: ./seekable_format.md
 [zstd_spec]: <https://github.com/facebook/zstd/blob/dev/contrib/seekable_format/zstd_seekable_compression_format.md>
 
+## Benchmarks
+
+Run on my laptop with an AMD Ryzen 7 8845HS on the collected works of Charles Dickens from the
+[Silesia compression corpus](https://sun.aei.polsl.pl//~sdeor/index.php?page=silesia). For
+reference, the benchmarks also include in-memory Encoder/Decoder from the
+[zstd](https://docs.rs/crate/zstd/latest) crate.
+
+Run the benchmarks with `cargo bench`.
+
+### Compression
+
+| Compressor                   | Throughput   |
+| ---------------------------- | ------------ |
+| `zeekstd::RawEncoder`        | 376.36 MiB/s |
+| `zeekstd::Encoder`           | 354.83 MiB/s |
+| `zstd::stream::raw::Encoder` | 371.65 MiB/s |
+
+### Decompression
+
+| Decompressor                 | Throughput   |
+| ---------------------------- | ------------ |
+| `zeekstd::Decoder`           | 1.4335 GiB/s |
+| `zstd::stream::raw::Decoder` | 1.4641 GiB/s |
+
 ## Compression
 
 A seekable `Encoder` will start new frames automatically at 2MiB of uncompressed data. See
