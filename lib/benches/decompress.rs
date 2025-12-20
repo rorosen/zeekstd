@@ -1,6 +1,7 @@
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::{hint::black_box, io::Write};
 use zeekstd::{BytesWrapper, Decoder, Encoder};
+use zstd::stream::raw::Operation;
 
 const DICKENS: &[u8] = include_bytes!("../../assets/dickens.txt");
 
@@ -39,5 +40,28 @@ fn decompression(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, decompression);
+fn zstd_rs_decompress(dec: &mut zstd::stream::raw::Decoder, input: &[u8], output: &mut [u8]) {
+    let mut in_prog = 0;
+
+    while in_prog != input.len() {
+        let stat = dec.run_on_buffers(&input[in_prog..], output).unwrap();
+        in_prog += stat.bytes_read;
+    }
+}
+
+fn zstd_rs_decompression(c: &mut Criterion) {
+    let mut buf = vec![0; zstd_safe::DCtx::out_size()];
+
+    let comp = dickens_compressed();
+    let mut dec = zstd::stream::raw::Decoder::new().unwrap();
+    let mut group = c.benchmark_group("zstd_rs_decompression");
+    group.throughput(Throughput::Bytes(DICKENS.len() as u64));
+    group.bench_function("dickens", |b| {
+        b.iter(|| {
+            zstd_rs_decompress(&mut dec, black_box(&comp), black_box(&mut buf));
+        });
+    });
+}
+
+criterion_group!(benches, decompression, zstd_rs_decompression);
 criterion_main!(benches);
