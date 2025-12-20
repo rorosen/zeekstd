@@ -60,7 +60,8 @@
             default = pkgs.mkShell {
               packages = [
                 pkgs.cargo-edit
-                pkgs.cargo-msrv
+                # takes a long time to build rustup
+                # pkgs.cargo-msrv
               ];
             };
             fuzz = pkgs.mkShell {
