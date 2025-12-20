@@ -15,7 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Respect offset for progress bar
 - Accept `u64` range for `--to` argument
 
-## [lib]
+## [0.6.2-lib]
 
 ### Fixed
 
