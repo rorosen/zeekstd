@@ -34,14 +34,20 @@ Zeekstd makes additions to the seekable format by implementing an updated versio
 
 ## Benchmarks
 
-Run on my laptop with an AMD Ryzen 7 8845HS on the collected works of Charles Dickens from the
-[Silesia compression corpus](https://sun.aei.polsl.pl//~sdeor/index.php?page=silesia). For
-reference, the benchmarks also include in-memory Encoder/Decoder from the
+Run on my laptop with an AMD Ryzen 7 8845HS, CPU Governor: Performance. For reference, the
+benchmarks also include streaming in-memory Encoder/Decoder from the
 [zstd](https://docs.rs/crate/zstd/latest) crate.
 
-Run the benchmarks with `cargo bench`.
+Run the benchmarks on your own with `cargo bench`.
 
 ### Compression
+
+Compression of the collected works of Charles Dickens from the
+[Silesia compression corpus](https://sun.aei.polsl.pl//~sdeor/index.php?page=silesia). The `zeekstd`
+encoders create new frames after 2 MiB of uncompressed data and populate the seek table during
+compression.
+
+All encoders use compression level 1.
 
 | Compressor                   | Throughput   |
 | ---------------------------- | ------------ |
@@ -50,6 +56,10 @@ Run the benchmarks with `cargo bench`.
 | `zstd::stream::raw::Encoder` | 371.65 MiB/s |
 
 ### Decompression
+
+All decoders decompress a seekable ZSTD compressed file (6 frames, 1 skippable frame) of the
+collected works of Charles Dickens from the
+[Silesia compression corpus](https://sun.aei.polsl.pl//~sdeor/index.php?page=silesia).
 
 | Decompressor                 | Throughput   |
 | ---------------------------- | ------------ |
