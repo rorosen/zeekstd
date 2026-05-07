@@ -1,0 +1,40 @@
+name: Build artifacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - release-bins
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-linux
+            runner: ubuntu-latest
+          - target: aarch64-linux
+            runner: ubuntu-24.04-arm64
+          - target: aarch64-darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.ACCESS_TOKEN }}
+
+      - name: Build static package
+        run: nix build .#zeekstd-static --print-build-logs
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ matrix.target }}
+          path: ./result/bin/zeekstd
