@@ -57,6 +57,7 @@ jobs:
       - name: Download All
         uses: actions/download-artifact@v8
         with:
+          path: artifacts
           merge-multiple: true
 
       - name: Publish release assets
@@ -64,5 +65,5 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           draft: true
-          files: "*.tar.gz"
+          files: "artifacts/*.tar.gz"
           token: ${{ secrets.GITHUB_TOKEN }}
