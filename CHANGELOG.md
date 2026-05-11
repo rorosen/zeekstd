@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [cli]
+
+- Add `-s` as shorthand for `--frame-size` in compress subcommand
+
 ## [0.4.3-cli]
 
 ### Fixed
