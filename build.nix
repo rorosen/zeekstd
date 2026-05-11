@@ -1,8 +1,9 @@
 {
+  gnutar,
   lib,
+  runCommand,
   rustPlatform,
 }:
-
 let
   cargoToml = builtins.fromTOML (builtins.readFile ./cli/Cargo.toml);
 in
@@ -20,6 +21,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   cargoLock.lockFile = ./Cargo.lock;
   cargoBuildFlags = [ "--package zeekstd_cli" ];
+
+  passthru.tarball =
+    runCommand "${finalAttrs.finalPackage.name}.tar.gz" { nativeBuildInputs = [ gnutar ]; }
+      ''
+        tar -czf $out -C "${finalAttrs.finalPackage}/bin" zeekstd
+      '';
 
   meta = {
     homepage = "https://github.com/rorosen/zeekstd";
