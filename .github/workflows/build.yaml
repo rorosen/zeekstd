@@ -1,0 +1,48 @@
+name: Build artifacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  cli_version:
+    name: Extract CLI version
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - id: cli_version
+      run: |
+        cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "zeekstd_cli") | "version=" + .version' | tee -a $GITHUB_OUTPUT
+    outputs:
+      version: ${{ steps.cli_version.outputs.version }}
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: cli_version
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-linux
+            runner: ubuntu-latest
+          - target: aarch64-darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.ACCESS_TOKEN }}
+
+      - name: Build static package
+        run: nix build --print-build-logs .#zeekstd-static.tarball
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zeekstd-v${{ needs.cli_version.outputs.version }}-${{ matrix.target }}.tar.gz
+          path: ./result
