@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use assert_cmd::{Command, cargo::cargo_bin_cmd};
+use assert_cmd::cargo::cargo_bin_cmd;
 use tempfile::{NamedTempFile, TempDir};
 
 const FRAME_SIZES: [&str; 5] = ["10", "123", "3K", "2M", "1G"];

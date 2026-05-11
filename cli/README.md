@@ -1,8 +1,35 @@
 # Zeekstd CLI
 
+## Installation
+
+#### From nixpkgs
+
+```bash
+nix-shell -p zeekstd
+```
+
+> [!NOTE]
+> This installation method is temporary
+
+#### From binaries
+
+TODO
+
+#### From `crates.io`
+
+```bash
+cargo install zeekstd_cli
+```
+
+#### From local source
+
+```bash
+cargo install --path ./cli
+```
+
 ## Building
 
-If you have Rust installed, just clone this repo and run `cargo build`.
+#### With cargo
 
 ```bash
 git clone https://github.com/rorosen/zeekstd.git
@@ -11,18 +38,11 @@ cargo build -p zeekstd_cli --release
 ./target/release/zeekstd --version
 ```
 
-Alternatively, build with `nix build`.
+#### With Nix
 
 ```bash
 nix build github:rorosen/zeekstd#default
 ./result/bin/zeekstd --version
-```
-
-Zeekstd is also available from nixpkgs.
-
-```bash
-nix-shell -p zeekstd
-zeekstd --version
 ```
 
 ## Compression

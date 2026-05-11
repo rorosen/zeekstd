@@ -5,6 +5,7 @@ members = ["cli", "lib", "fuzz"]
 [workspace.package]
 edition = "2024"
 license = "BSD-2-Clause"
+description = "Rust implementation of the Zstandard Seekable Format."
 homepage = "https://github.com/rorosen/zeekstd"
 repository = "https://github.com/rorosen/zeekstd"
 readme = "README.md"

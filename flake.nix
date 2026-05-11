@@ -35,8 +35,9 @@
         }:
         {
           packages = {
-            zeekstd = pkgs.callPackage ./build.nix { };
             default = config.packages.zeekstd;
+            zeekstd = pkgs.callPackage ./build.nix { };
+            zeekstd-static = pkgs.pkgsStatic.callPackage ./build.nix { };
           };
 
           checks = {

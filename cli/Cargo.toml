@@ -1,14 +1,14 @@
 [package]
 name = "zeekstd_cli"
 version = "0.4.3"
-publish = false
+description.workspace = true
 edition.workspace = true
 license.workspace = true
-keywords.workspace = true
-categories.workspace = true
-homepage.workspace = true
+keywords = ["zstd", "zstandard", "compression", "zstd-seekable-format", "cli"]
+categories = ["compression", "command-line-utilities"]
+homepage = "https://github.com/rorosen/zeekstd/tree/main/cli"
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 [[bin]]
 name = "zeekstd"
@@ -19,7 +19,7 @@ anyhow = "1.0.100"
 clap = { version = "4.5.53", features = ["derive"] }
 indicatif = "0.18.3"
 memmap2 = "0.9.9"
-zeekstd = { path = "../lib" }
+zeekstd = { path = "../lib", version = "0.6.2" }
 zstd-safe.workspace = true
 
 [lints]

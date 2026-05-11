@@ -175,7 +175,7 @@ pub struct CompressArgs {
 
     /// The frame size at which to start a new frame. Accepts the suffixes K (kib), M (mib) and G
     /// (gib).
-    #[arg(long, default_value = "2M")]
+    #[arg(short = 's', long, default_value = "2M")]
     pub frame_size: ByteValue,
 
     /// Whether to apply the frame size to compressed or uncompressed size of the frame data.

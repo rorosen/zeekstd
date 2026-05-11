@@ -1,0 +1,15 @@
+name: Audit
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - run: cargo install cargo-audit --locked
+      - uses: actions/checkout@v6
+      - run: cargo audit
