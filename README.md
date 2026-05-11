@@ -37,6 +37,11 @@ Zeekstd makes additions to the seekable format by implementing an updated versio
 [zeekstd_spec]: ./seekable_format.md
 [zstd_spec]: <https://github.com/facebook/zstd/blob/dev/contrib/seekable_format/zstd_seekable_compression_format.md>
 
+## CLI
+
+Take a look at the [cli](./cli) directory, if you are looking for a CLI tool that implements all
+features of the zeekstd library.
+
 ## Benchmarks
 
 Run on my laptop with an AMD Ryzen 7 8845HS, CPU Governor: Performance. For reference, the
@@ -123,10 +128,6 @@ fn main() -> zeekstd::Result<()> {
     Ok(())
 }
 ```
-
-## CLI
-
-This repo also contains a [CLI tool](./cli) that uses the library.
 
 ## Finding the Right Frame Size
 
