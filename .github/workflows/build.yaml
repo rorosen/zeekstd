@@ -38,7 +38,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.ACCESS_TOKEN }}
 
-      - name: Build static package
+      - name: Build static binary
         run: |
           nix build --print-build-logs \
             --out-link zeekstd-v${{ needs.cli_version.outputs.version }}-${{ matrix.target }}.tar.gz \
@@ -48,6 +48,36 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           path: zeekstd-v${{ needs.cli_version.outputs.version }}-${{ matrix.target }}.tar.gz
+          archive: false
+
+  build-windows:
+    name: Build x86_64-windows
+    needs: cli_version
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build static binary
+        run: cargo build --release --package zeekstd_cli
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      - name: Compress with 7z
+        shell: pwsh
+        run: |
+          $outName = "zeekstd-v${{ needs.cli_version.outputs.version }}-x86_64-windows.zip"
+          7z a -tzip $outName "./target/release/zeekstd.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: zeekstd-v${{ needs.cli_version.outputs.version }}-x86_64-windows.zip
           archive: false
 
   release:
