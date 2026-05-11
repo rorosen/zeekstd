@@ -39,13 +39,16 @@ jobs:
           github_access_token: ${{ secrets.ACCESS_TOKEN }}
 
       - name: Build static package
-        run: nix build --print-build-logs .#zeekstd-static.tarball
+        run: |
+          nix build --print-build-logs \
+            --out-link zeekstd-v${{ needs.cli_version.outputs.version }}-${{ matrix.target }}.tar.gz \
+            .#zeekstd-static.tarball
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: zeekstd-v${{ needs.cli_version.outputs.version }}-${{ matrix.target }}.tar.gz
-          path: ./result
+          path: zeekstd-v${{ needs.cli_version.outputs.version }}-${{ matrix.target }}.tar.gz
+          archive: false
 
   release:
     name: Publish release assets
