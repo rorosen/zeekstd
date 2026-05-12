@@ -202,6 +202,7 @@ impl Command {
                 };
                 let compressor =
                     Compressor::new(&args, prefix_len, seek_table_file, new_writer()?, bar)?;
+
                 let mode = ExecMode::Compress {
                     reader,
                     compressor,
@@ -224,8 +225,8 @@ impl Command {
                     .patch_apply
                     .as_ref()
                     .and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
-                let decompressor = Decompressor::new(&args, prefix_len, flags.progress_style())?;
                 let writer = new_writer()?;
+                let decompressor = Decompressor::new(&args, prefix_len, flags.progress_style())?;
 
                 let mode = ExecMode::Decompress {
                     decompressor,

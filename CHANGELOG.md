@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [cli]
+
+- Do not print progress bar before checking whether output file exists.
+
 ## [0.4.4-cli]
 
 ### Added
