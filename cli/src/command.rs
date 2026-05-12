@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     fs::{self, File},
     io::{self, IsTerminal, Read, Write},
     ops::Deref,
@@ -95,20 +94,6 @@ impl Command {
 
     fn out_path(&self) -> Option<PathBuf> {
         let in_path = self.in_path().map(PathBuf::from);
-        let out_path = in_path.as_ref().map(|p| {
-            // TODO: Use `add_extension` when stable: https://github.com/rust-lang/rust/issues/127292
-            let extension = p.extension().map_or_else(
-                || OsString::from("zst"),
-                |e| {
-                    let mut ext = OsString::from(e);
-                    ext.push(".zst");
-                    ext
-                },
-            );
-
-            p.with_extension(extension)
-        });
-
         let is_stdout = match self {
             Self::Compress(CompressArgs { common, .. })
             | Self::Decompress(DecompressArgs { common, .. }) => common.stdout,
@@ -119,7 +104,9 @@ impl Command {
         }
 
         match &self {
-            Command::Compress(CompressArgs { output_file, .. }) => output_file.clone().or(out_path),
+            Command::Compress(CompressArgs { output_file, .. }) => output_file
+                .clone()
+                .or_else(|| in_path.map(|p| p.with_added_extension("zst"))),
             Command::Decompress(DecompressArgs { output_file, .. }) => output_file
                 .clone()
                 // TODO: respect extension (.zst)
