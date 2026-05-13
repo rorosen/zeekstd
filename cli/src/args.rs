@@ -85,6 +85,29 @@ impl FromStr for LastFrame {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct NumFrames(u32);
+
+impl NumFrames {
+    pub fn additional_frames(&self) -> u32 {
+        // minus one because the initial frame is already included
+        self.0 - 1
+    }
+}
+
+impl FromStr for NumFrames {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let n = u32::from_str(s)?;
+        if n == 0 {
+            bail!("frame number must be greater than 0");
+        }
+
+        Ok(Self(n))
+    }
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct CliFlags {
     /// Suppress output. Ignored in list mode.
@@ -295,7 +318,7 @@ pub struct ListArgs {
 
     /// The number of frames to list.
     #[arg(long, group = "end")]
-    pub num_frames: Option<u32>,
+    pub num_frames: Option<NumFrames>,
 
     /// Detailed listing of individual frames, implied when frame boundaries are specified.
     #[arg(short, long, action)]
@@ -398,5 +421,15 @@ mod tests {
             let value = LastFrame::from_str(input).unwrap();
             assert!(matches!(value, LastFrame::End));
         }
+    }
+
+    #[test]
+    fn num_frames_greater_zero() {
+        assert!(NumFrames::from_str("0").is_err());
+    }
+
+    #[test]
+    fn num_frames_provides_correct_addiitonal_frames() {
+        assert_eq!(NumFrames(1).additional_frames(), 0);
     }
 }

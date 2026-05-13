@@ -5,13 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Please note that this changelog is for both, the library and the CLI tool.
+
 ## [Unreleased]
 
 ## [cli]
 
-- Do not start print progress bar before checking whether output file exists
+- Do not start printing the progress bar before checking whether output file exists
 - Only derive the output file name during decompression when the input file has a `zst` extension
 - Refuse reading from stdin, if it is a terminal. Use `--force` to disable the check
+- Fix the numbers of frames that are printed when `--num-frames` is passed to the `list` subcommand.
+  Formerly this listed one frame too much.
 
 ## [0.4.4-cli]
 

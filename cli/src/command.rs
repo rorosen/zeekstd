@@ -251,7 +251,7 @@ impl Command {
                         .context("Failed to read seek table")?;
 
                 let end_frame = if let Some(num) = args.num_frames {
-                    Some(args.from_frame.unwrap_or(0) + num)
+                    Some(args.from_frame.unwrap_or(0) + num.additional_frames())
                 } else {
                     args.to_frame.map(|e| match e {
                         LastFrame::End => seek_table.num_frames() - 1,
