@@ -9,7 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [cli]
 
-- Do not print progress bar before checking whether output file exists.
+- Do not start print progress bar before checking whether output file exists
+- Only derive the output file name during decompression when the input file has a `zst` extension
 
 ## [0.4.4-cli]
 

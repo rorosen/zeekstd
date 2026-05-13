@@ -92,7 +92,7 @@ impl Command {
         }
     }
 
-    fn out_path(&self) -> Option<PathBuf> {
+    fn out_path(&self) -> Result<Option<PathBuf>> {
         let in_path = self.in_path().map(PathBuf::from);
         let is_stdout = match self {
             Self::Compress(CompressArgs { common, .. })
@@ -100,18 +100,30 @@ impl Command {
             Self::List(_) => false,
         };
         if is_stdout {
-            return None;
+            return Ok(None);
         }
 
         match &self {
-            Command::Compress(CompressArgs { output_file, .. }) => output_file
+            Command::Compress(CompressArgs { output_file, .. }) => Ok(output_file
                 .clone()
-                .or_else(|| in_path.map(|p| p.with_added_extension("zst"))),
-            Command::Decompress(DecompressArgs { output_file, .. }) => output_file
-                .clone()
-                // TODO: respect extension (.zst)
-                .or_else(|| in_path.map(|p| p.with_extension(""))),
-            Command::List(_) => None,
+                .or_else(|| in_path.map(|p| p.with_added_extension("zst")))),
+            Command::Decompress(DecompressArgs { output_file, .. }) => {
+                if output_file.is_some() {
+                    Ok(output_file.clone())
+                } else {
+                    if in_path
+                        .as_ref()
+                        .is_some_and(|p| p.extension().is_none_or(|e| e != "zst"))
+                    {
+                        bail!(
+                            "{}: unknown extension (.zst expected); cannot derive the output file name",
+                            in_path.unwrap_or_default().display()
+                        )
+                    }
+                    Ok(in_path.map(|p| p.with_extension("")))
+                }
+            }
+            Command::List(_) => Ok(None),
         }
     }
 
@@ -127,7 +139,7 @@ impl Command {
     #[allow(clippy::too_many_lines)]
     pub fn run(self, flags: &CliFlags) -> Result<()> {
         let in_path = self.in_path();
-        let out_path = self.out_path();
+        let out_path = self.out_path()?;
         let force_write_stdout = self.force_write_stdout();
 
         // This is a closure so the writer can be created after the input has been validated
