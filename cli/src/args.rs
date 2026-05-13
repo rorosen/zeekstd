@@ -114,7 +114,7 @@ impl CliFlags {
 
 #[derive(Debug, Parser, Clone)]
 pub struct CommonArgs {
-    /// Disable output checks.
+    /// Disable input and output checks.
     #[arg(short, long, action, global = true)]
     pub force: bool,
 

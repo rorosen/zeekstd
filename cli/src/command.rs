@@ -164,12 +164,15 @@ impl Command {
         };
         let exec = match self {
             Command::Compress(args) => {
-                let reader: Box<dyn Read> = match &in_path {
-                    Some(p) => {
-                        let file = File::open(p).context("Failed to open input file")?;
-                        Box::new(file)
+                let reader: Box<dyn Read> = if let Some(p) = &in_path {
+                    let file = File::open(p).context("Failed to open input file")?;
+                    Box::new(file)
+                } else {
+                    let stdin = io::stdin();
+                    if !args.common.force && stdin.is_terminal() {
+                        bail!("stdin is a terminal, aborting");
                     }
-                    None => Box::new(io::stdin()),
+                    Box::new(io::stdin())
                 };
                 let prefix_len = args
                     .patch_from
