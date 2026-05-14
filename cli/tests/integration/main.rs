@@ -179,7 +179,7 @@ fn cycle_with_separate_seek_table() {
 }
 
 #[test]
-fn derive_out_name() {
+fn derive_out_name_when_compressing() {
     let dir = TempDir::new().unwrap();
     let mut input = NamedTempFile::new_in(dir.path()).unwrap();
     input.write_all(b"foo").unwrap();
@@ -190,7 +190,129 @@ fn derive_out_name() {
         .assert()
         .success();
 
-    assert!(PathBuf::from(format!("{}.zst", input.path().display())).exists());
+    let compressed_path = input.path().with_added_extension("zst");
+    assert!(compressed_path.exists());
+}
+
+#[test]
+fn derive_out_name_when_decompressing() {
+    let dir = TempDir::new().unwrap();
+    let mut input = NamedTempFile::new_in(dir.path()).unwrap();
+    input.write_all(b"foo").unwrap();
+    let compressed_path = dir.path().join("seekable.zst");
+
+    assert!(!compressed_path.exists());
+
+    cargo_bin_cmd!("zeekstd")
+        .arg("compress")
+        .arg(input.path())
+        .arg("--output-file")
+        .arg(&compressed_path)
+        .assert()
+        .success();
+
+    assert!(compressed_path.exists());
+
+    cargo_bin_cmd!("zeekstd")
+        .arg("decompress")
+        .arg(&compressed_path)
+        .assert()
+        .success();
+
+    let decompressed_path = compressed_path.with_extension("");
+    assert!(decompressed_path.exists());
+    assert_eq!(
+        fs::read(input.path()).unwrap(),
+        fs::read(&decompressed_path).unwrap()
+    );
+}
+
+#[test]
+fn fail_to_derive_out_name_when_decompressing_without_extension() {
+    let dir = TempDir::new().unwrap();
+    let mut input = NamedTempFile::new_in(dir.path()).unwrap();
+    input.write_all(b"foo").unwrap();
+
+    let compressed_path = dir.path().join("seekable");
+    assert!(!compressed_path.exists());
+
+    cargo_bin_cmd!("zeekstd")
+        .arg("compress")
+        .arg(input.path())
+        .arg("--output-file")
+        .arg(&compressed_path)
+        .assert()
+        .success();
+
+    assert!(compressed_path.exists());
+
+    cargo_bin_cmd!("zeekstd")
+        .arg("decompress")
+        .arg(&compressed_path)
+        .assert()
+        .failure();
+}
+
+#[test]
+fn fail_to_derive_out_name_when_decompressing_with_unknown_extension() {
+    let dir = TempDir::new().unwrap();
+    let mut input = NamedTempFile::new_in(dir.path()).unwrap();
+    input.write_all(b"foo").unwrap();
+
+    let compressed_path = dir.path().join("seekable.foo");
+    assert!(!compressed_path.exists());
+
+    cargo_bin_cmd!("zeekstd")
+        .arg("compress")
+        .arg(input.path())
+        .arg("--output-file")
+        .arg(&compressed_path)
+        .assert()
+        .success();
+
+    assert!(compressed_path.exists());
+
+    cargo_bin_cmd!("zeekstd")
+        .arg("decompress")
+        .arg(&compressed_path)
+        .assert()
+        .failure();
+}
+
+#[test]
+fn use_provided_output_path_during_decompression() {
+    let dir = TempDir::new().unwrap();
+    let mut input = NamedTempFile::new_in(dir.path()).unwrap();
+    input.write_all(b"foo").unwrap();
+
+    let compressed_path = dir.path().join("seekable.foo");
+    assert!(!compressed_path.exists());
+
+    cargo_bin_cmd!("zeekstd")
+        .arg("compress")
+        .arg(input.path())
+        .arg("--output-file")
+        .arg(&compressed_path)
+        .assert()
+        .success();
+
+    assert!(compressed_path.exists());
+
+    let decompressed_path = dir.path().join("decompressed");
+
+    cargo_bin_cmd!("zeekstd")
+        .arg("decompress")
+        .arg(&compressed_path)
+        .arg("--output-file")
+        .arg(&decompressed_path)
+        .assert()
+        .success();
+
+    assert!(decompressed_path.exists());
+    assert_eq!(
+        fs::read(input.path()).unwrap(),
+        fs::read(&decompressed_path).unwrap()
+    );
 }
 
 #[test]

@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     fs::{self, File},
     io::{self, IsTerminal, Read, Write},
     ops::Deref,
@@ -93,38 +92,38 @@ impl Command {
         }
     }
 
-    fn out_path(&self) -> Option<PathBuf> {
+    fn out_path(&self) -> Result<Option<PathBuf>> {
         let in_path = self.in_path().map(PathBuf::from);
-        let out_path = in_path.as_ref().map(|p| {
-            // TODO: Use `add_extension` when stable: https://github.com/rust-lang/rust/issues/127292
-            let extension = p.extension().map_or_else(
-                || OsString::from("zst"),
-                |e| {
-                    let mut ext = OsString::from(e);
-                    ext.push(".zst");
-                    ext
-                },
-            );
-
-            p.with_extension(extension)
-        });
-
         let is_stdout = match self {
             Self::Compress(CompressArgs { common, .. })
             | Self::Decompress(DecompressArgs { common, .. }) => common.stdout,
             Self::List(_) => false,
         };
         if is_stdout {
-            return None;
+            return Ok(None);
         }
 
         match &self {
-            Command::Compress(CompressArgs { output_file, .. }) => output_file.clone().or(out_path),
-            Command::Decompress(DecompressArgs { output_file, .. }) => output_file
+            Command::Compress(CompressArgs { output_file, .. }) => Ok(output_file
                 .clone()
-                // TODO: respect extension (.zst)
-                .or_else(|| in_path.map(|p| p.with_extension(""))),
-            Command::List(_) => None,
+                .or_else(|| in_path.map(|p| p.with_added_extension("zst")))),
+            Command::Decompress(DecompressArgs { output_file, .. }) => {
+                if output_file.is_some() {
+                    Ok(output_file.clone())
+                } else {
+                    if in_path
+                        .as_ref()
+                        .is_some_and(|p| p.extension().is_none_or(|e| e != "zst"))
+                    {
+                        bail!(
+                            "{}: unknown extension (.zst expected); cannot derive the output file name",
+                            in_path.unwrap_or_default().display()
+                        )
+                    }
+                    Ok(in_path.map(|p| p.with_extension("")))
+                }
+            }
+            Command::List(_) => Ok(None),
         }
     }
 
@@ -140,7 +139,7 @@ impl Command {
     #[allow(clippy::too_many_lines)]
     pub fn run(self, flags: &CliFlags) -> Result<()> {
         let in_path = self.in_path();
-        let out_path = self.out_path();
+        let out_path = self.out_path()?;
         let force_write_stdout = self.force_write_stdout();
 
         // This is a closure so the writer can be created after the input has been validated
@@ -165,12 +164,15 @@ impl Command {
         };
         let exec = match self {
             Command::Compress(args) => {
-                let reader: Box<dyn Read> = match &in_path {
-                    Some(p) => {
-                        let file = File::open(p).context("Failed to open input file")?;
-                        Box::new(file)
+                let reader: Box<dyn Read> = if let Some(p) = &in_path {
+                    let file = File::open(p).context("Failed to open input file")?;
+                    Box::new(file)
+                } else {
+                    let stdin = io::stdin();
+                    if !args.common.force && stdin.is_terminal() {
+                        bail!("stdin is a terminal, aborting");
                     }
-                    None => Box::new(io::stdin()),
+                    Box::new(io::stdin())
                 };
                 let prefix_len = args
                     .patch_from
@@ -202,6 +204,7 @@ impl Command {
                 };
                 let compressor =
                     Compressor::new(&args, prefix_len, seek_table_file, new_writer()?, bar)?;
+
                 let mode = ExecMode::Compress {
                     reader,
                     compressor,
@@ -224,8 +227,8 @@ impl Command {
                     .patch_apply
                     .as_ref()
                     .and_then(|p| fs::metadata(p).map(|m| m.len()).ok());
-                let decompressor = Decompressor::new(&args, prefix_len, flags.progress_style())?;
                 let writer = new_writer()?;
+                let decompressor = Decompressor::new(&args, prefix_len, flags.progress_style())?;
 
                 let mode = ExecMode::Decompress {
                     decompressor,
@@ -248,7 +251,7 @@ impl Command {
                         .context("Failed to read seek table")?;
 
                 let end_frame = if let Some(num) = args.num_frames {
-                    Some(args.from_frame.unwrap_or(0) + num)
+                    Some(args.from_frame.unwrap_or(0) + num.additional_frames())
                 } else {
                     args.to_frame.map(|e| match e {
                         LastFrame::End => seek_table.num_frames() - 1,

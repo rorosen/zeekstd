@@ -3,7 +3,7 @@ name: Build artifacts
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*-cli'
   workflow_dispatch:
 
 jobs:
@@ -24,9 +24,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-linux
+          - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-          - target: aarch64-darwin
+          - target: aarch64-apple-darwin
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
     steps:
@@ -38,7 +38,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.ACCESS_TOKEN }}
 
-      - name: Build static package
+      - name: Build static binary
         run: |
           nix build --print-build-logs \
             --out-link zeekstd-v${{ needs.cli_version.outputs.version }}-${{ matrix.target }}.tar.gz \
@@ -48,6 +48,42 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           path: zeekstd-v${{ needs.cli_version.outputs.version }}-${{ matrix.target }}.tar.gz
+          archive: false
+
+  build-windows:
+    name: Build x86_64-pc-windows-msvc
+    needs: cli_version
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build static binary
+        run: cargo build --release --package zeekstd_cli
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      - name: Version Check
+        shell: pwsh
+        run: |
+          $version = "${{ needs.cli_version.outputs.version }}"
+          ./target/release/zeekstd.exe --version | Select-String -Pattern $version -Quiet || (throw "Version check failed")
+
+      - name: Compress binary
+        shell: pwsh
+        run: |
+          $outName = "zeekstd-v${{ needs.cli_version.outputs.version }}-x86_64-pc-windows-msvc.zip"
+          7z a -tzip $outName "./target/release/zeekstd.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: zeekstd-v${{ needs.cli_version.outputs.version }}-x86_64-pc-windows-msvc.zip
           archive: false
 
   release:
@@ -62,11 +98,12 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+          skip-decompress: true
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           draft: true
-          files: "artifacts/*.tar.gz"
+          files: "artifacts/*"
           token: ${{ secrets.GITHUB_TOKEN }}

@@ -13,7 +13,8 @@
 Rust implementation of the Zstandard Seekable Format.
 
 - [Documentation](https://docs.rs/zeekstd)
-- [Changelog](/CHANGELOG.md)
+- [LIB Changelog](/CHANGELOG_LIB.md)
+- [CLI Changelog](/CHANGELOG_CLI.md)
 
 ## About
 
@@ -39,8 +40,7 @@ Zeekstd makes additions to the seekable format by implementing an updated versio
 
 ## CLI
 
-Take a look at the [cli](./cli) directory, if you are looking for a CLI tool that implements all
-features of the zeekstd library.
+The [cli](./cli) directory provides a CLI tool that implements all features of the zeekstd library.
 
 ## Benchmarks
 
