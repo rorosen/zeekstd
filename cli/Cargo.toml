@@ -1,6 +1,6 @@
 [package]
 name = "zeekstd_cli"
-version = "0.4.4"
+version = "0.4.5"
 description.workspace = true
 edition.workspace = true
 license.workspace = true
