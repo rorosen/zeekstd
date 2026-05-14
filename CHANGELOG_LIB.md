@@ -5,52 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Please note that this changelog is for both, the library and the CLI tool.
-
 ## [Unreleased]
 
-## [cli]
-
-- Do not start printing the progress bar before checking whether output file exists
-- Only derive the output file name during decompression when the input file has a `zst` extension
-- Refuse reading from stdin, if it is a terminal. Use `--force` to disable the check
-- Fix the numbers of frames that are printed when `--num-frames` is passed to the `list` subcommand.
-  Formerly this listed one frame too much.
-
-## [0.4.4-cli]
-
-### Added
-
-- Add `-s` as shorthand for `--frame-size` in compress subcommand
-
-## [0.4.3-cli]
-
-### Fixed
-
-- Print raw progress bytes if `--raw-bytes` is passed
-- Respect offset for progress bar
-- Accept `u64` range for `--to` argument
-
-## [0.6.2-lib]
+## [0.6.2]
 
 ### Fixed
 
 - Fix a seek table decoding bug where it gets populated with wrong data when the read buffer gets
   only partially filled.
 
-## [0.4.2-cli]
-
-### Changed
-
-- Use lib `v0.6.1`
-
-## [0.6.1-lib]
+## [0.6.1]
 
 ### Fixed
 
 - Decoding no longer panics due to wrong slice indexing when the output buffer is partially filled
 
-## [0.6.0-lib]
+## [0.6.0]
 
 ### Fixed
 
@@ -101,7 +71,7 @@ The `Error` struct changed in an incompatible way:
 - The function `Error::other()` was removed
 - The method `Error::is_other()` was removed
 
-## [0.5.1-lib]
+## [0.5.1]
 
 ### Added
 
@@ -111,15 +81,7 @@ The `Error` struct changed in an incompatible way:
 
 - Parsing a seek table with 1022 frames does not falsely yield a "corruption detected" error anymore
 
-## [0.4.1-cli]
-
-### Fixed
-
-- The window size that is used when creating/applying binary patches is now always big enough to fit
-  the complete prefix
-- Parsing a seek table with 1022 frames does not falsely yield a "corruption detected" error anymore
-
-## [0.5.0-lib]
+## [0.5.0]
 
 ### Added
 
@@ -136,14 +98,3 @@ The `Error` struct changed in an incompatible way:
 ### Changed
 
 - `Decoder::set_lower_frame` and `Decoder::set_upper_frame` return a `Result` now
-
-## [0.4.0-cli]
-
-### Added
-
-- Add options for decompression from an arbitrary byte offset up to an offset limit
-
-### Changed
-
-- Argument `--from` of the `decompress` command now expects a byte offset, not a frame index
-- Argument `--to` of the `decompress` command now expects an offset limit, not a frame index

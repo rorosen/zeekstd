@@ -13,7 +13,8 @@
 Rust implementation of the Zstandard Seekable Format.
 
 - [Documentation](https://docs.rs/zeekstd)
-- [Changelog](/CHANGELOG.md)
+- [LIB Changelog](/CHANGELOG_LIB.md)
+- [CLI Changelog](/CHANGELOG_CLI.md)
 
 ## About
 
