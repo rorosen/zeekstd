@@ -68,6 +68,12 @@ jobs:
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
 
+      - name: Version Check
+        shell: pwsh
+        run: |
+          $version = "${{ needs.cli_version.outputs.version }}"
+          ./target/release/zeekstd.exe --version | Select-String -Pattern $version -Quiet || (throw "Version check failed")
+
       - name: Compress with 7z
         shell: pwsh
         run: |

@@ -3,6 +3,7 @@
   lib,
   runCommand,
   rustPlatform,
+  versionCheckHook,
 }:
 let
   cargoToml = builtins.fromTOML (builtins.readFile ./cli/Cargo.toml);
@@ -18,6 +19,9 @@ rustPlatform.buildRustPackage (finalAttrs: {
     ".md"
     ".txt"
   ];
+
+  nativeInstallCheckInputs = [ versionCheckHook ];
+  doInstallCheck = true;
 
   cargoLock.lockFile = ./Cargo.lock;
   cargoBuildFlags = [ "--package zeekstd_cli" ];
