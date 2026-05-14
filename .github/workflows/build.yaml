@@ -3,7 +3,7 @@ name: Build artifacts
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*-cli'
   workflow_dispatch:
 
 jobs:
@@ -74,7 +74,7 @@ jobs:
           $version = "${{ needs.cli_version.outputs.version }}"
           ./target/release/zeekstd.exe --version | Select-String -Pattern $version -Quiet || (throw "Version check failed")
 
-      - name: Compress with 7z
+      - name: Compress binary
         shell: pwsh
         run: |
           $outName = "zeekstd-v${{ needs.cli_version.outputs.version }}-x86_64-pc-windows-msvc.zip"
