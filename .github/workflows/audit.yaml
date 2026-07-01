@@ -11,5 +11,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: cargo install cargo-audit --locked
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - run: cargo audit
