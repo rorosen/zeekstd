@@ -59,9 +59,9 @@
           devShells = {
             default = pkgs.mkShell {
               packages = [
+                pkgs.cargo-audit
                 pkgs.cargo-edit
-                # takes a long time to build rustup
-                # pkgs.cargo-msrv
+                pkgs.cargo-msrv
               ];
             };
             fuzz = pkgs.mkShell {
