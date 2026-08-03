@@ -1,21 +1,41 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    ":dependencyDashboard",
-    "group:all",
-    "schedule:monthly",
-    ":maintainLockFilesMonthly",
-    ":semanticCommitTypeAll(update)",
-    ":semanticCommitScopeDisabled"
+    "config:recommended"
   ],
-  "dependencyDashboard": false,
-  "lockFileMaintenance": {
-    "extends": [
-      "group:all"
-    ]
-  },
-  "nix": {
-    "enabled": true
-  },
-  "separateMajorMinor": false
+  "packageRules": [
+    {
+      "description": "Monthly Nix updates",
+      "matchManagers": [
+        "nix"
+      ],
+      "groupName": "Nix Dependencies",
+      "schedule": [
+        "on the first day of the month"
+      ],
+      "separateMajorMinor": false
+    },
+    {
+      "description": "Monthly Rust updates",
+      "matchManagers": [
+        "cargo"
+      ],
+      "groupName": "Rust Dependencies",
+      "schedule": [
+        "on the first day of the month"
+      ],
+      "separateMajorMinor": false
+    },
+    {
+      "description": "Monthly GitHub Actions updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "GitHub Actions Dependencies",
+      "schedule": [
+        "on the first day of the month"
+      ],
+      "separateMajorMinor": false
+    }
+  ]
 }
