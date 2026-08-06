@@ -3,6 +3,7 @@
   "extends": [
     "config:recommended"
   ],
+  "dependencyDashboard": false,
   "packageRules": [
     {
       "description": "Monthly Nix updates",

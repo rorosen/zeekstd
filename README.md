@@ -131,13 +131,14 @@ fn main() -> zeekstd::Result<()> {
 
 ## Finding the Right Frame Size
 
-Every frame adds a small amount of metadata depending on compression parameters (e.g. whether frame
-checksums are used) and increases the size of the seek table. Hence, small frame sizes impact the
-compression ratio negatively, but also reduce decompression cost when requesting small segments of
-data, so there is a balance to find.
+Every frame adds a small amount of metadata to the compressed data and increases the size of the
+seek table. An entry in the seek table has always the same size, while the size of the metadata
+depends on compression parameters, e.g. whether frame checksums are used. Small frame sizes
+impact the compression ratio negatively, but also reduce decompression cost when requesting small
+segments of data, so there is a balance to find.
 
-Very small frame sizes below a few KiB should be avoided in general, as they can hurt the
-compression ratio notably.
+Very small frame sizes below a few KiB should be avoided in general, as they hurt the compression
+ratio notably.
 
 ## Fuzzing
 
