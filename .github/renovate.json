@@ -1,42 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:semverAllMonthly"
   ],
   "dependencyDashboard": false,
-  "packageRules": [
-    {
-      "description": "Monthly Nix updates",
-      "matchManagers": [
-        "nix"
-      ],
-      "groupName": "Nix Dependencies",
-      "schedule": [
-        "on the first day of the month"
-      ],
-      "separateMajorMinor": false
-    },
-    {
-      "description": "Monthly Rust updates",
-      "matchManagers": [
-        "cargo"
-      ],
-      "groupName": "Rust Dependencies",
-      "schedule": [
-        "on the first day of the month"
-      ],
-      "separateMajorMinor": false
-    },
-    {
-      "description": "Monthly GitHub Actions updates",
-      "matchManagers": [
-        "github-actions"
-      ],
-      "groupName": "GitHub Actions Dependencies",
-      "schedule": [
-        "on the first day of the month"
-      ],
-      "separateMajorMinor": false
-    }
-  ]
+  "nix": {
+    "enabled": true
+  }
 }
