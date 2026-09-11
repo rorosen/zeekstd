@@ -37,6 +37,17 @@ impl Error {
         matches!(self.kind, Kind::FrameIndexTooLarge)
     }
 
+    pub(crate) fn invalid_frame_size_policy() -> Self {
+        Self {
+            kind: Kind::InvalidFrameSizePolicy,
+        }
+    }
+
+    /// Returns true if the error is related to a frame size policy that is invalid.
+    pub fn is_invalid_frame_size_policy(&self) -> bool {
+        matches!(self.kind, Kind::InvalidFrameSizePolicy)
+    }
+
     pub(crate) fn zstd(code: ZSTD_ErrorCode) -> Self {
         let wrapped = 0_usize.wrapping_sub(code as usize);
         Self {
@@ -63,6 +74,7 @@ impl core::fmt::Display for Error {
             Kind::NumberConversionFailed(err) => write!(f, "number conversion failed: {err}"),
             Kind::OffsetOutOfRange => f.write_str("offset out of range"),
             Kind::FrameIndexTooLarge => f.write_str("frame index too large"),
+            Kind::InvalidFrameSizePolicy => f.write_str("invalid frame size policy"),
             #[cfg(feature = "std")]
             Kind::IO(err) => write!(f, "io error: {err}"),
             Kind::Zstd(code) => f.write_str(get_error_name(*code)),
@@ -105,6 +117,8 @@ enum Kind {
     OffsetOutOfRange,
     /// The passed frame index is too large.
     FrameIndexTooLarge,
+    /// The frame size policy is invalid.
+    InvalidFrameSizePolicy,
     /// IO error.
     #[cfg(feature = "std")]
     IO(std::io::Error),
@@ -120,6 +134,7 @@ impl core::fmt::Debug for Kind {
             }
             Self::OffsetOutOfRange => write!(f, "OffsetOutOfRange"),
             Self::FrameIndexTooLarge => write!(f, "FrameIndexTooLarge"),
+            Self::InvalidFrameSizePolicy => write!(f, "InvalidFrameSizePolicy"),
             #[cfg(feature = "std")]
             Self::IO(arg0) => f.debug_tuple("IO").field(arg0).finish(),
             Self::Zstd(c) => write!(f, "{}; code {}", zstd_safe::get_error_name(*c), c),
