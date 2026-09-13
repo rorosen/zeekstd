@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `RawEncoder::with_opts` now returns an error if `FrameSizePolicy` has a frame size of 0
+
+### Added
+
+The `Error` struct has changed:
+
+- The method `Error::is_invalid_frame_size_policy()` was added
+
 ## [0.6.2]
 
 ### Fixed

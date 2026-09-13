@@ -7,7 +7,7 @@ use zstd_safe::{
 
 #[cfg(feature = "std")]
 use crate::seek_table::Format;
-use crate::{SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result};
+use crate::{Error, SEEKABLE_MAX_FRAME_SIZE, SeekTable, error::Result};
 
 // Constant value always can be casted
 const MAX_FRAME_SIZE: u32 = SEEKABLE_MAX_FRAME_SIZE as u32;
@@ -17,6 +17,8 @@ const MAX_FRAME_SIZE: u32 = SEEKABLE_MAX_FRAME_SIZE as u32;
 /// The uncompressed frame size will never get greater than [`SEEKABLE_MAX_FRAME_SIZE`],
 /// independent of the frame size policy in use, i.e. a new frame will **always** be started if
 /// the uncompressed frame size reaches [`SEEKABLE_MAX_FRAME_SIZE`].
+///
+/// In all cases, the frame size must be greater than 0.
 #[derive(Debug, Clone)]
 pub enum FrameSizePolicy {
     /// Starts a new frame when the compressed size of the current frame exceeds the specified
@@ -278,6 +280,11 @@ impl<'a> RawEncoder<'a> {
     ///
     /// Fails if the raw encoder could not be created.
     pub fn with_opts(mut opts: EncodeOptions<'a>) -> Result<Self> {
+        if let FrameSizePolicy::Uncompressed(0) | FrameSizePolicy::Compressed(0) = opts.frame_policy
+        {
+            return Err(Error::invalid_frame_size_policy());
+        }
+
         opts.cctx
             .set_parameter(CParameter::CompressionLevel(opts.compression_level))?;
         opts.cctx
@@ -828,6 +835,30 @@ mod tests {
         assert_eq!(encoder.seek_table().num_frames(), 1);
 
         debug_assert_eq!(&first_st, encoder.seek_table());
+    }
+
+    #[test]
+    fn raw_encoder_forbids_uncompressed_frame_size_0() {
+        assert!(
+            EncodeOptions::new()
+                .frame_size_policy(FrameSizePolicy::Uncompressed(0))
+                .into_raw_encoder()
+                .err()
+                .unwrap()
+                .is_invalid_frame_size_policy()
+        );
+    }
+
+    #[test]
+    fn raw_encoder_forbids_compressed_frame_size_0() {
+        assert!(
+            EncodeOptions::new()
+                .frame_size_policy(FrameSizePolicy::Compressed(0))
+                .into_raw_encoder()
+                .err()
+                .unwrap()
+                .is_invalid_frame_size_policy()
+        );
     }
 
     #[test]
