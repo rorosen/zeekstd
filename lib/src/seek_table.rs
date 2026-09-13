@@ -104,10 +104,8 @@ struct Entries(Vec<Entry>);
 
 impl Entries {
     fn with_num_frames(num_frames: usize) -> Self {
-        // Make sure there is always space for one frame
-        let num_frames = num_frames.max(1);
-        let cap = core::mem::size_of::<Entry>() * num_frames;
-        Self(Vec::with_capacity(cap))
+        // Add one for the final entry
+        Self(Vec::with_capacity(num_frames + 1))
     }
 
     fn into_frames(self) -> Vec<Frame> {
