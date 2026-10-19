@@ -6,7 +6,7 @@
 [![Documentation](https://docs.rs/zeekstd/badge.svg)](https://docs.rs/zeekstd)
 
 [![Crates.io](https://img.shields.io/crates/v/zeekstd.svg)](https://crates.io/crates/zeekstd)
-[![MSRV 1.85.1](https://img.shields.io/badge/msrv-1.85.1-dea584.svg?logo=rust)](https://github.com/rust-lang/rust/releases/tag/1.85.1)
+[![MSRV 1.91.1](https://img.shields.io/badge/msrv-1.91.1-dea584.svg?logo=rust)](https://github.com/rust-lang/rust/releases/tag/1.85.1)
 
 [![](https://img.shields.io/badge/Packaged_for-Nix-5277C3.svg?logo=nixos&labelColor=73C3D5)](https://search.nixos.org/packages?size=1&show=zeekstd)
 

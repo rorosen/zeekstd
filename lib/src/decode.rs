@@ -245,13 +245,13 @@ impl<'a, S: Seekable> Decoder<'a, S> {
                     .decompress_stream(&mut out_buffer, &mut in_buffer)?;
                 // Frame end
                 // TODO: chain when stable
-                if n == 0 {
-                    if let Some(pref) = prefix {
-                        self.dctx
-                            .reset(ResetDirective::SessionOnly)
-                            .expect("Resetting session never fails");
-                        self.dctx.ref_prefix(pref)?;
-                    }
+                if n == 0
+                    && let Some(pref) = prefix
+                {
+                    self.dctx
+                        .reset(ResetDirective::SessionOnly)
+                        .expect("Resetting session never fails");
+                    self.dctx.ref_prefix(pref)?;
                 }
             }
 

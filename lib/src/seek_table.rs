@@ -1070,11 +1070,11 @@ mod tests {
 
         let mut c_size = 3;
         let mut d_size = 6;
-        for _ in 0..num_frames {
+        (0..num_frames).for_each(|_| {
             st.log_frame(c_size, d_size).unwrap();
             c_size += 1;
             d_size += 1;
-        }
+        });
 
         st
     }

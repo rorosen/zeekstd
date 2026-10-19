@@ -338,10 +338,10 @@ impl<'a> RawEncoder<'a> {
             let mut out_buf = OutBuffer::around(output);
             // Reference prefix at the beginning of a frame
             // TODO: chain when stable
-            if let Some(pref) = prefix {
-                if self.frame_d_size == 0 {
-                    self.cctx.ref_prefix(pref)?;
-                }
+            if let Some(pref) = prefix
+                && self.frame_d_size == 0
+            {
+                self.cctx.ref_prefix(pref)?;
             }
 
             while in_buf.pos() < limit && out_buf.pos() < out_buf.capacity() {
