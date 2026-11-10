@@ -6,12 +6,12 @@ A CLI tool for the Zstandard seekable format.
 
 #### From nixpkgs
 
+> [!NOTE]
+> This installation method is temporary
+
 ```bash
 nix-shell -p zeekstd
 ```
-
-> [!NOTE]
-> This installation method is temporary
 
 #### From prebuilt binaries
 
