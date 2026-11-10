@@ -18,7 +18,7 @@ jobs:
     - name: Build cli
       run: cargo build -p zeekstd_cli --verbose
     - name: Test lib
-      run: cargo test -p zeekstd --verbose
+      run: cargo test -p zeekstd --verbose --all-features
     - name: Test lib no_std
       run: cargo test -p zeekstd --verbose --no-default-features
     - name: Test cli

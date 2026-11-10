@@ -19,10 +19,10 @@ zstd-safe = { version = "8.2.0", features = ["std"] }
 pedantic = { level = "deny", priority = -1 }
 cast_possible_wrap = "allow"
 cast_possible_truncation = "allow"
-cast-lossless = "allow"
+cast_lossless = "allow"
 must_use_candidate = "allow"
 return_self_not_must_use = "allow"
-struct-excessive-bools = "allow"
+struct_excessive_bools = "allow"
 
 [profile.bench]
 codegen-units = 1

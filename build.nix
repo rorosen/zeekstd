@@ -4,6 +4,8 @@
   runCommand,
   rustPlatform,
   versionCheckHook,
+  zstd,
+  pkg-config,
 }:
 let
   cargoToml = builtins.fromTOML (builtins.readFile ./cli/Cargo.toml);
@@ -20,6 +22,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
     ".txt"
   ];
 
+  nativeBuildInputs = [ pkg-config ];
+  buildInputs = [ zstd ];
   nativeInstallCheckInputs = [ versionCheckHook ];
   doInstallCheck = true;
 
