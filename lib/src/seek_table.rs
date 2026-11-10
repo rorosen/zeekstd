@@ -1063,7 +1063,6 @@ mod tests {
     use super::*;
 
     use proptest::prelude::*;
-    use zstd_safe::OutBuffer;
 
     fn seek_table(num_frames: u32) -> SeekTable {
         let mut st = SeekTable::new();
@@ -1151,6 +1150,7 @@ mod tests {
         assert_eq!(from_seekable, st);
     }
 
+    #[cfg(feature = "compat")]
     fn test_serialize_compatible_with_zstd_seekable(num_frames: u32) {
         let st = seek_table(num_frames);
         let mut ser = st.clone().into_serializer();
@@ -1182,7 +1182,10 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "compat")]
     fn test_deserialize_compatible_with_zstd_seekable(num_frames: u32) {
+        use zstd_safe::OutBuffer;
+
         let mut fl = zstd_safe::seekable::FrameLog::create(true);
 
         for i in 1..=num_frames {
@@ -1264,11 +1267,13 @@ mod tests {
         }
 
         #[test]
+        #[cfg(feature = "compat")]
         fn serialize_compatible_with_zstd_seekable(num_frames in 0..4096u32) {
             test_serialize_compatible_with_zstd_seekable(num_frames);
         }
 
         #[test]
+        #[cfg(feature = "compat")]
         fn deserialize_compatible_with_zstd_seekable(num_frames in 0..4096u32) {
             test_deserialize_compatible_with_zstd_seekable(num_frames);
         }

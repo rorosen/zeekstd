@@ -18,14 +18,12 @@ criterion = "0.8.2"
 proptest = "1.12.0"
 zstd = "0.14.3"
 
-[dev-dependencies.zstd-safe]
-workspace = true
-features = ["seekable"]
-
 [features]
 default = ["std"]
 
 std = ["zstd-safe/std"]
+# Test compatibility with zstd's contrib implementation of the seekable format
+compat = ["zstd-safe/seekable"]
 
 [package.metadata.docs.rs]
 all-features = true
